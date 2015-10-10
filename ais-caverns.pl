@@ -10,6 +10,8 @@
 
 # Afterward, a few areas of floor are converted into water or lava.
 
+# This version knows how to embed the Wizard's Tower or Fake Tower.
+
 use warnings;
 use strict;
 use Term::ANSIColor;
@@ -17,6 +19,7 @@ use Term::ANSIColor;
 use constant width => 80;
 use constant height => 21;
 
+use constant FLOOR => 0;
 use constant RIGHT => 1;
 use constant UP => 2;
 use constant LEFT => 4;
@@ -31,7 +34,25 @@ use constant LAVA => 512;
 my @map;
 my @coords;
 
+my %arg;
+my $depthfraction;
 my $dohtml = 0;
+
+while (@ARGV) {
+  my $arg = shift @ARGV;
+  if ($arg =~ /^([0-9.]+)$/) {
+    $depthfraction = $arg;
+  } elsif ($arg =~ /^(wiz|fake)tower\d$/) {
+    $arg{embed}  = $arg;
+  } elsif ($arg =~ /html/) {
+    $dohtml = 1;
+  } else {
+    warn "Did not understand argument: $arg\n";
+  }
+}
+
+$depthfraction = randomdepth() if not defined $depthfraction;
+
 open HTML, ">>", "gehennom-maps.html" if $dohtml;
 
 sub randomdepth {
@@ -40,7 +61,6 @@ sub randomdepth {
   return $d;
 }
 
-my $depthfraction = $ARGV[0] || randomdepth();
 print HTML qq[<div class="dungeon">
 <div class="dungeondepth">Depth Fraction: $depthfraction</div>\n] if $dohtml;
 
@@ -108,6 +128,8 @@ sub block_point {
     }
 }
 
+doembed($arg{embed}) if $arg{embed};
+
 for my $cpair (@shuffled_coords) {
     my $x = $cpair->[0];
     my $y = $cpair->[1];
@@ -166,7 +188,7 @@ while ($anychanges) {
         my @neighbours = neighbours $x, $y;
         $map[$x][$y] & (SOLID | CORRIDOR) and next;
         $neighbours[$_] & CORRIDOR and next LENGTHEN for (0, 2, 4, 6);
-        $neighbours[$_] & CORRIDOR and 
+        $neighbours[$_] & CORRIDOR and
             ($neighbours[($_ + 3) % 8] & (SOLID | CORRIDOR) ||
              $neighbours[($_ + 5) % 8] & (SOLID | CORRIDOR)) and
             ($anychanges = 1),
@@ -199,6 +221,8 @@ for my $x (1 .. (width-2)) {
         }
     }
 }
+
+doembed($arg{embed}) if $arg{embed};
 
 # Work out where walls should be. We start by drawing a square around every
 # open floor space, then remove the parts of the square that do not connect
@@ -279,7 +303,7 @@ sub cleanly_ending_corridor {
     my ($x, $y) = @_;
     return unless $map[$x][$y] & CORRIDOR;
 
-    my @neighbours = neighbours $x, $y;    
+    my @neighbours = neighbours $x, $y;
     my $corridorcount = 0;
     $neighbours[$_] & CORRIDOR and $corridorcount++ for (0, 2, 4, 6);
     return if $corridorcount != 1;
@@ -323,27 +347,48 @@ for my $x (0 .. (width-1)) {
 
 my $liquid   = ($depthfraction > (rand(100) / 90)) ? LAVA : WATER;
 my $liqcount = 0;
-for (1 .. int((rand(6) * rand($depthfraction * 8)) - 1.5)) {
-  $liqcount++;
-  my $cx = int rand width;
-  my $cy = int rand height;
-  my $radius  = 2 + rand rand rand 7;
-  my $stretch = 1 + ((rand 50) / 100);
-  my $jitter  = (rand 50) / 20;
-  for my $x (($cx - $radius * $stretch) .. ($cx + $radius * $stretch)) {
-    if (($x > 0) and ($x + 1 < width)) {
-      for my $y (($cy - $radius) .. ($cy + $radius)) {
-        if (($y > 0) and ($y + 1 < height)) {
-          my $distance = sqrt((($x - $cx) / $stretch)**2 + ($y - $cy) ** 2) + rand $jitter;
-          if (($distance <= $radius) and (not ($map[$x][$y] & SOLID))
-                                     and (not ($map[$x][$y] & CORRIDOR))) {
-            $map[$x][$y] |= $liquid;
-          }}}}}}
+my $river    = 0;
+if (2 > int rand($depthfraction * 100)) {
+  $river = 1;
+  my $minbreadth = 1 + rand 1;
+  my $cx = (width / 4) + rand(width / 2);
+  my ($cy, $cydir, $cxdir) = (0, 1, 0);
+  if (50 < int rand 100) {
+    ($cy, $cydir) = (height - 1, -1);
+  }
+  for (0 .. height) {
+    my $hflex = $minbreadth * 1.5;
+    if ($cx / width > 0.9) {
+      $cx += $hflex - rand $hflex;
+      $cxdir = -2;
+    } elsif ($cx / width < 0.1) {
+      $cx += (rand $hflex) - $hflex;
+      $cxdir = 2;
+    } elsif (abs($cxdir) > $minbreadth * 2) {
+      $cxdir = $cxdir * rand 1;
+      $cx += $cxdir;
+    } else {
+      $cxdir += $hflex - rand($hflex * 2);
+      $cx += $cxdir;
+    }
+    dopool($cx, $cy, $minbreadth + rand $minbreadth, 0);
+    $cy += $cydir;
+  }
+} else {
+  for (1 .. int((rand(6) * rand($depthfraction * 8)) - 1.5)) {
+    $liqcount++;
+    my $cx = int rand width;
+    my $cy = int rand height;
+    my $radius  = 2 + rand rand rand 7;
+    dopool($cx, $cy, $radius);
+  }}
 my $plural = ($liqcount > 1) ? "s" : '';
-my $liquidcount = $liqcount ? "($liqcount pool$plural of " . ($liquid eq LAVA ? "lava" : "water") . ")"
+my $liquidcount = $river ? "(river of " . ($liquid eq LAVA ? "lava" : "water") . ")"
+  : $liqcount ? "($liqcount pool$plural of " . ($liquid eq LAVA ? "lava" : "water") . ")"
   : "(No liquid)";
 print HTML qq[<div class="liquidcount">$liquidcount</div>\n] if $dohtml;
 print $liquidcount . "\n";
+
 
 print HTML qq[<div class="dungeonmap">\n] if $dohtml;
 for my $y (0 .. (height-1)) {
@@ -390,3 +435,132 @@ for my $y (0 .. (height-1)) {
     print "\n";
 }
 print HTML "</div></div>\n\n" if $dohtml;
+
+sub dopool {
+  my ($cx, $cy, $radius, $jitter) = @_;
+  my $stretch      = 1 + ((rand 50) / 100);
+  my $jitter     ||= (rand 50) / 20;
+  my $eatrockpct ||= 0;
+  for my $x (($cx - $radius * $stretch) .. ($cx + $radius * $stretch)) {
+    if (($x > 0) and ($x + 1 < width)) {
+      for my $y (($cy - $radius) .. ($cy + $radius)) {
+        if (($y > 0) and ($y + 1 < height)) {
+          my $distance = sqrt((($x - $cx) / $stretch)**2 + ($y - $cy) ** 2) + rand $jitter;
+          if (($distance <= $radius) and
+              ((not ($map[int $x][int $y] & SOLID))
+                and (not ($map[int $x][int $y] & CORRIDOR)))) {
+            $map[int $x][int $y] = $liquid;
+          }}}}}
+}
+
+sub embedcenter {
+  my (@e) = @_; # The embed is assumed to be rectangular.  (But, it can contain undecided terrain.)
+  my $x = int((width - scalar @{$e[0]}) / 2);
+  my $y = int((height - scalar @e) / 2);
+  return ($x, $y);
+}
+
+sub placeembed {
+  my ($e, $xoffset, $yoffset) = @_;
+  my $dy = 0;
+  for my $line (@$e) {
+    my $dx = 0;
+    for my $tile (@$line) {
+      $map[$xoffset + $dx][$yoffset + $dy] = $tile;
+      $dx++;
+    }
+    $dy++;
+  }
+}
+
+sub parseembed {
+  return map {
+    [ map {
+      my $char = $_;
+      my $tile = UNDECIDED;
+      if ($char =~ /[-|]/) {
+        $tile = SOLID;
+      } elsif ($char eq ' ') {
+        $tile = SOLID;
+      } elsif ($char eq '.') {
+        $tile = FLOOR;
+      } elsif ($char eq 'S') {
+        $tile = (SOLID | CORRIDOR);
+      } elsif ($char eq '?') {
+        $tile = UNDECIDED;
+      } elsif ($char eq 'L') {
+        $tile = LAVA;
+      } elsif ($char eq 'W') {
+        $tile = WATER;
+      }
+      $tile;
+    } split //, $_]
+  } @_;
+}
+
+sub doembed {
+  my ($special) = @_;
+  my @embed = ([]);
+  if ($special eq 'wiztower1') {
+    print "Wizard's Tower, Bottom Level\n";
+    @embed = parseembed(' --------------------- ',
+                        ' |...................| ',
+                        ' |--S------------....| ',
+                        ' |....|.WWWWWWW.|--S-| ',
+                        ' |....|.WW   WW.|....| ',
+                        ' |....|.W  .  W.|....| ',
+                        ' |-S--|.W ... W.|....| ',
+                        ' |....|.W  .  W.|....| ',
+                        ' |....S.WW   WW.|....| ',
+                        ' |....|.WWWWWWW.|....| ',
+                        ' --------------------- ');
+  } elsif ($special eq 'wiztower2') {
+    print "Wizard's Tower, Middle Level\n";
+    @embed = parseembed('---------------------',
+                        '|....|..............|',
+                        '|-S--|-S----------S-|',
+                        '|..|.|.........|....|',
+                        '|..S.|.........|-S--|',
+                        '|..|.|.........|....|',
+                        '|S--S|.........|....|',
+                        '|....|.........|--S-|',
+                        '|....S.........|....|',
+                        '|....|.........|....|',
+                        '---------------------');
+  } elsif ($special eq 'wiztower3') {
+    print "Wizard's Tower, Top Level\n";
+    @embed = parseembed('---------------------',
+                        '|....S.......S......|',
+                        '|....|-----------S--|',
+                        '|....|WWWWWWW|......|',
+                        '|....|WW---WW|......|',
+                        '|....|W--.--W|......|',
+                        '|--S-|W|...|W|----S-|',
+                        '|....|W--.--W|......|',
+                        '|....|WW---WWS......|',
+                        '|....|WWWWWWW|......|',
+                        '---------------------');
+  } elsif ($special eq 'faketower1') {
+    print "Fake Tower One\n";
+    @embed = parseembed('WWWWWWW',
+                        'WW---WW',
+                        'W--.--W',
+                        'W|...|W',
+                        'W--.--W',
+                        'WW---WW',
+                        'WWWWWWW');
+  } elsif ($special eq 'faketower2') {
+    print "Fake Tower Two\n";
+    @embed = parseembed('WWWWWWW',
+                        'WW---WW',
+                        'W--.--W',
+                        'W|...|W',
+                        'W--.--W',
+                        'WW---WW',
+                        'WWWWWWW');
+  }
+  my ($xoffset, $yoffset) = embedcenter(@embed);
+  placeembed([@embed], $xoffset, $yoffset);
+}
+
+
