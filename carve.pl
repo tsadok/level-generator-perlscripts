@@ -6,37 +6,61 @@ use Carp;
 
 my ($ROWNO, $COLNO) = (21, 79);
 my $roomcount = 0;
+my $domonsters = 0;
+my $pillarprob = 12;
 my (@carvepoint, @room);
+
+# TODO list:
+# 1. The pillar placement probably ought to check that it's possible
+#    to go around the pillar, and that it does not block any doors.
+# 2. Parallel walls look ugly due to unnecessary cross connections.
 
 my $corr  = +{ t => 'CORR',
                b => 'on_black',
                f => 'white',
                c => '#',
              };
-my $ecorr = $corr;#+{ t => 'CORR',
-#               b => 'on_black',
-#               f => 'cyan',
-#               c => '#',
-#             };
+my $ecorr = $corr;
+  #+{ t => 'CORR',
+  #   b => 'on_black',
+  #   f => 'cyan',
+  #   c => '#',
+  # };
 my $scorr = +{ t => 'CORR',
                b => 'on_black',
                f => 'blue',
                c => '#',
              };
+sub roomfloor {
+  my ($roomno) = @_;
+  return +{
+           t => 'ROOM',
+           b => 'on_black',
+           f => 'white',
+           c => '·',
+           r => $roomno,
+          };
+}
 my $floor = +{ t => 'ROOM',
                b => 'on_black',
                f => 'white',
-               c => '.',
+               c => '·',
              };
+# Some colored floors for debugging purposes:
 my $redfloor = +{ t => 'ROOM',
                b => 'on_black',
                f => 'red',
-               c => '.',
+               c => '·',
              };
 my $bluefloor = +{ t => 'ROOM',
                b => 'on_black',
                f => 'blue',
-               c => '.',
+               c => '·',
+             };
+my $greenfloor = +{ t => 'ROOM',
+                    b => 'on_black',
+                    f => 'green',
+                    c => '.',
              };
 my $stone = +{ c => ' ',
                b => 'on_black',
@@ -76,6 +100,15 @@ my $vwall = +{ c => '|',
 #               f => 'yellow',
 #               t => 'DOOR' };
 
+my %wdir = ( E => +{ bit => 1, dx =>  1, dy =>  0, clockwise => 'S', },
+             N => +{ bit => 2, dx =>  0, dy => -1, clockwise => 'E', },
+             W => +{ bit => 4, dx => -1, dy =>  0, clockwise => 'N', },
+             S => +{ bit => 8, dx =>  0, dy =>  1, clockwise => 'W', },
+           );
+my @wallglyph = qw/! ─ │ └ ─ ─ ┘ ┴ │ ┌ │ ├ ┐ ┬ ┤ ┼/;
+$wallglyph[0] = '-';
+
+
 my @map = (map {
   [ map { $stone } 0 .. $ROWNO ],
 } 0 .. $COLNO);
@@ -92,6 +125,12 @@ my @carvemethod =
                             (20 > int rand 100) ? $scorr : $corr);
       },
     },
+   +{ name => 'spiral',
+      type => 'corridor',
+      make => sub {
+        return carvespiral(@_);
+      },
+    },
    +{ name => 'basic_short_corridor',
       type => 'corridor',
       make => sub {
@@ -99,11 +138,11 @@ my @carvemethod =
         return carvebasiccorridor($ox, $oy, $odx, $ody, $parent, $corr);
       },
     },
-   +{ name => 'secret_short_corridor',
+   +{ name => 'secret_corridor',
       type => 'corridor',
       make => sub {
         my ($ox, $oy, $odx, $ody, $parent) = @_;
-        return carvebasiccorridor($ox, $oy, $odx, $ody, $parent, $scorr);
+        return carvebasiccorridor($ox, $oy, $odx, $ody, $parent, $scorr, 1 + int rand rand 2);
       },
     },
    +{ name => 'marketplace',
@@ -118,6 +157,24 @@ my @carvemethod =
         return carvetee(@_);
       },
     },
+   +{ name => 'Y',
+      type => 'room',
+      make => sub {
+        return carveyroom(@_);
+      },
+    },
+   +{ name => 'rhombus',
+      type => 'room',
+      make => sub {
+        return carverhombus(@_);
+      },
+    },
+   +{ name => 'octagon',
+      type => 'room',
+      make => sub {
+        return carveoctagon(@_);
+      },
+    },
    (+{
      name => 'rectangle',
      type => 'room',
@@ -127,12 +184,16 @@ my @carvemethod =
     }) x 2,
   );
 
+my %count = map { $_ => 0 } qw(marketplace spiral);
 #use Data::Dumper; print Dumper(+{ cmarray => \@carvemethod });
 my $x  = 10 + int rand($COLNO - 20);
 my $y  =  3 + int rand($ROWNO - 6);
 my ($dx, $dy) = choosedir();
 recursivecarve($x, $y, $dx, $dy, undef);
 recursivecarve($x - $dx, $y - $dy, 0 - $dx, 0 - $dy, undef);
+
+#$map[$x][$y] = $map[$x - $dx][$y - $dy] = $greenfloor; # for debug purposes
+
 #showmap();
 #print "\n";
 #print color "green";
@@ -142,7 +203,6 @@ recursivecarve($x - $dx, $y - $dy, 0 - $dx, 0 - $dy, undef);
 
 my $iota;
 my $needswork = 1;
-my $marketplacecount = 0;
 while ($needswork) {
   die "iota" if $iota++ > 1000;
   my $delta;
@@ -155,31 +215,286 @@ while ($needswork) {
   $needswork = 0;
   # But if there's a *huge* rectangle still unused, we can reseed in
   # the middle of it and go some more...
-  if (rectisempty(1,1,int($COLNO/5),$ROWNO-1)) {
-    #print color "on_red"; print "NEEDS WORK (WEST)"; print color "reset"; print "\n";
-    my $x = 0;
-    my $y = int($ROWNO / 2);
-    my $kappa;
-    while (($map[$x][$y]{t} eq 'STONE') and ($x * 2 < $COLNO)) {
-      die "kappa" if $kappa++ > 1000;
-      $x++;
+  my $maxyoff = int($ROWNO / 4);
+  for my $yoff (1 .. $maxyoff) {
+    if (rectisempty(1,$yoff,int($COLNO/5),$ROWNO+$yoff-$maxyoff-1)) {
+      #print color "on_red"; print "NEEDS WORK (WEST)"; print color "reset"; print "\n";
+      my $x = 0;
+      my $y = int(($ROWNO + $yoff - ($maxyoff/2)) / 2);
+      my $kappa;
+      while (($map[$x][$y]{t} eq 'STONE') and ($x + 2 < $COLNO)) {
+        die "kappa" if $kappa++ > 1000;
+        $x++;
+      }
+      recursivecarve($x, $y, -1, 0, undef);
+      recursivecarve($x, $y, 0, -1, undef);
+      recursivecarve($x, $y, 0,  1, undef);
+      #$map[$x][$y] = $greenfloor;
+      $needswork++;
     }
-    recursivecarve($x, $y, -1, 0, undef);
-    $needswork++;
-  }
-  if (rectisempty(int($COLNO * 4 / 5), 1, $COLNO - 1, $ROWNO - 1)) {
-    #print color "on_red"; print "NEEDS WORK (EAST)"; print color "reset"; print "\n";
-    my $x = $COLNO - 1;
-    my $y = int($ROWNO / 2);
-    my $lambda;
-    while (($map[$x][$y]{t} eq 'STONE') and ($x * 2 > $COLNO)) {
-      die "lambda" if $lambda++ > 1000;
-      $x--;
+    if (rectisempty(int($COLNO * 4 / 5), $yoff, $COLNO - 1, $ROWNO+$yoff-$maxyoff-1)) {
+      #print color "on_red"; print "NEEDS WORK (EAST)"; print color "reset"; print "\n";
+      my $x = $COLNO - 1;
+      my $y = int(($ROWNO + $yoff - ($maxyoff/2)) / 2);
+      my $lambda;
+      while (($map[$x][$y]{t} eq 'STONE') and ($x > 2)) {
+        die "lambda" if $lambda++ > 1000;
+        $x--;
+      }
+      recursivecarve($x, $y, 1,  0, undef);
+      recursivecarve($x, $y, 0, -1, undef);
+      recursivecarve($x, $y, 0,  1, undef);
+      #$map[$x][$y] = $greenfloor;
+      $needswork++;
     }
-    recursivecarve($x, $y, 1, 0, undef);
-    $needswork++;
   }
 }
+# Some rooms might should have pillars...
+my $rno = 0;
+for my $r (@room) {
+  $rno++;
+  if (($$r{type} eq 'room') and ($pillarprob > int rand 100)) {
+    my $tries = 0;
+    my ($cx, $cy) = (0, 0);
+    while ((($cx == 0) or
+            ($map[$cx][$cy]{r} ne $rno) or
+            ($map[$cx][$cy]{t} ne 'ROOM')) and
+           ($tries++ < 1000)) {
+      $cx = 1 + int rand ($COLNO - 2);
+      $cy = 1 + int rand ($ROWNO - 2);
+    }
+    for my $x (($cx - 1) .. ($cx + 1)) {
+      for my $y (($cy - 1) .. ($cy + 1)) {
+        if ($map[$x][$y]{t} eq 'ROOM') {
+          $map[$x][$y] = $stone;
+        } elsif ($map[$x][$y]{t} eq 'CORR') {
+          $map[$x][$y] = $scorr;
+        } elsif ($map[$x][$y]{t} eq 'DOOR') {
+          $map[$x][$y] = $sdoor;
+        }
+      }
+    }
+  }
+}
+
+# Final Cleanup:
+my $anychanges = 1;
+while ($anychanges) {
+  $anychanges = 0;
+  for my $x (0 .. $COLNO) {
+    for my $y (0 .. $ROWNO) {
+      my $snc = solidneighborcount($x, $y, 1, 1, 1);
+      if (($map[$x][$y]{t} eq 'WALL') and
+          ($snc == 8)) {
+        $anychanges++;
+        $map[$x][$y] = $stone;
+      } elsif (($map[$x][$y]{t} eq 'STONE') and
+               ($snc < 8)) {
+          $map[$x][$y] = $hwall;
+      }
+      if ($map[$x][$y]{t} eq 'CORR') {
+        my $ofc = orthogonalfloorcount($x, $y);
+        if ($ofc >= 3) {
+          $map[$x][$y] = $floor;
+          $anychanges++;
+          #} elsif (($ofc == 1) and
+          #         solidneighborcount($x,$y,0,0,0) <= 5) {
+          #  $map[$x][$y] = $door;
+        }
+        for my $dirone (keys %wdir) {
+          my $dirtwo = $wdir{$dirone}{clockwise};
+          my $none = neighbor($x, $y, $dirone);
+          my $ntwo = neighbor($x, $y, $dirtwo);
+          if ($none and $ntwo and
+              ($$none{t} eq 'ROOM') and
+              ($$ntwo{t} eq 'ROOM')) {
+            # Check the diagonal neighbor between those two orthogonals;
+            # if it _also_ is room floor, then convert this corridor.
+            # Because dirone and dirtwo are adjacent orthogonals, we
+            # can just add their dx and dy together to get the diag;
+            # and by similar reasoning, we know the diagonal isn't
+            # out of bounds, because we checked the orthogonals.
+            my $nx = $x + $wdir{$dirone}{dx} + $wdir{$dirtwo}{dx};
+            my $ny = $y + $wdir{$dirone}{dy} + $wdir{$dirtwo}{dy};
+            if ($map[$nx][$ny]{t} eq 'ROOM') {
+              $map[$x][$y] = $floor;
+              $anychanges++;
+            }
+          }
+        }
+      }
+      if ($map[$x][$y]{t} eq 'DOOR') {
+        # This check doesn't seem to work as intended.
+        #print "DOOR($x,$y): ";
+        for my $dirone (keys %wdir) {
+          my $dirtwo = $wdir{$dirone}{clockwise};
+          my $none = neighbor($x, $y, $dirone);
+          my $ntwo = neighbor($x, $y, $dirtwo);
+          #print "[$dirone: $$none{t}; $dirtwo: $$none{t}]";
+          if ($none and $ntwo and
+              ($$none{t} eq 'ROOM') and
+              ($$ntwo{t} eq 'ROOM')) {
+            #print " => FLOOR ";
+            $map[$x][$y] = $floor;
+            $anychanges++;
+          }
+        }
+      }
+    }
+  }
+}
+for my $x (0 .. $COLNO) {
+  for my $y (0 .. $ROWNO) {
+    fixwalldirs($x, $y);
+  }
+}
+# Place Stairs:
+my ($upstair, $dnstair, $tries);
+while ((not $dnstair) and ($tries++ < 4000)) {
+  my $x = 2 + int rand ($COLNO - 4);
+  my $y = 1 + int rand ($ROWNO - 2);
+  if (($map[$x][$y]{t} eq 'ROOM') or
+      (($tries > 1000) and ($map[$x][$y]{t} eq 'CORR')) or
+      ($tries > 3000)) {
+    if ($upstair) {
+      $dnstair = [$x, $y];
+      $map[$x][$y] = +{ b => 'on_black',
+                        t => 'STAIR',
+                        c => '>',
+                        f => 'red',
+                      };
+    } else {
+      $upstair = [$x, $y];
+      $map[$x][$y] = +{ b => 'on_black',
+                        t => 'STAIR',
+                        c => '<',
+                        f => 'red',
+                      };
+    }
+  }
+}
+# Other Dungeon Features...
+my @randfeature = (+{ name   => 'fountain',
+                      tile   => +{ b => 'on_black',
+                                   f => 'cyan',
+                                   t => 'FOUNTAIN',
+                                   c => '{',
+                                 },
+                      prob   => 55,
+                      count  => 3, },
+                   +{ name   => 'altar',
+                      center => 1,
+                      tile   => +{ b => 'on_black',
+                                   f => 'yellow',
+                                   c => '_',
+                                   t => 'ALTAR',
+                                },
+                      count  => 1,
+                      prob   => 15,
+                    },
+                   +{ name   => 'sink',
+                      count  => 1,
+                      prob   => 10,
+                      onwall => 1,
+                      tile   => +{ b => 'on_black',
+                                   f => 'cyan',
+                                   c => '#',
+                                   t => 'SINK',
+                                 },
+                    },
+                   +{ name   => 'monster',
+                      count  => 50,
+                      prob   => ($domonsters ? 100 : 0),
+                      tile   => $floor,
+                      monst  => 1,
+                    },
+                  );
+my @monster = ( # This is just for visual flavor.  The actual game
+                # will of course generate monsters via its own
+                # mechanisms, using difficulty etc.
+               +{ name  => 'insect',
+                  mlet  => 'a',
+                  color => ['yellow', 'blue', 'red', 'green', 'magenta'],
+                },
+               +{ name  => 'chicken',
+                  mlet  => 'c',
+                  color => ['yellow', 'red'],
+                },
+               +{ name  => 'gremlin',
+                  mlet  => 'g',
+                  color => ['green', 'magenta'],
+                },
+               +{ name  => 'humanoid',
+                  mlet  => 'h',
+                  color => ['green', 'red', 'blue', 'magenta'],
+                },
+               +{ name  => 'nymph',
+                  mlet  => 'n',
+                  color => ['green', 'blue', 'cyan'],
+                },
+               +{ name  => 'Centaur',
+                  mlet  => 'C',
+                  color => ['green', 'cyan'],
+                },
+               +{ name  => 'Dragon',
+                  mlet  => 'D',
+                  color => ['black', 'white', 'yellow', 'red', 'blue', 'green'],
+                },
+               +{ name  => 'Giant',
+                  mlet  => 'H',
+                  color => ['white', 'cyan', 'yellow', 'blue', 'magenta'],
+                },
+               +{ name  => 'Troll',
+                  mlet  => 'T',
+                  color => ['white', 'cyan', 'magenta'],
+                },
+               +{ name  => 'Vampire',
+                  mlet  => 'V',
+                  color => ['red', 'blue'],
+                },
+               +{ name  => 'Human',
+                  mlet  => '@',
+                  color => ['green', 'green', 'white', 'blue', 'red'],
+                },
+              );
+my $rno = 0;
+for my $r (@room) {
+  my $tries = 0;
+  $rno++;
+  if ($$r{type} eq 'room') {
+    my $f = $randfeature[int rand @randfeature];
+    if ($$f{prob} > rand 100) {
+      my $multi = 1 + int rand rand $$f{count};
+      my $placed = 0;
+      while (($tries++ < 1000) and $placed < $multi) {
+        my $x = int rand $COLNO;
+        my $y = int rand $ROWNO;
+        my $tile = $map[$x][$y];
+        if (($$tile{r} == $rno) and
+            ($$tile{t} == 'ROOM') and
+            ((orthogonalfloorcount($x,$y) >= int((1000 - $tries) / 200))
+             or not $$f{center}) and
+            ((solidneighborcount($x,$y,0,0,0) >= int((1000 - $tries) / 333))
+             or not $$f{onwall})
+           ) {
+          $map[$x][$y] = +{ %$tile,
+                            %{$$f{tile}},
+                          };
+          if ($$f{monst}) {
+            my $m = $monster[int rand @monster];
+            my $c = $$m{color}[int rand @{$$m{color}}];
+            $map[$x][$y] = +{ %$tile,
+                              f => $c || 'cyan',
+                              c => $$m{mlet} || 'I',
+                            };
+          }
+          $placed++;
+        }
+      }
+    }
+  }
+}
+showmap();
 
 sub rectisempty {
   my ($minx, $miny, $maxx, $maxy) = @_;
@@ -257,11 +572,18 @@ sub recursivecarve {
         }
       } else {
         if ($room[$roomno]{type} eq 'corridor') {
-          $map[$cx][$cy] = ($map[$cx][$cy]{t} eq 'WALL') ? $sdoor : $ecorr;
+          $map[$cx][$cy] = ($map[$cx][$cy]{t} eq 'WALL') ? $sdoor : $scorr;
         } else {
           $map[$cx][$cy] = (20 > int rand 100) ? $sdoor : $door;
         }
-        $map[$ox][$oy] = ($map[$ox][$oy]{t} eq 'WALL') ? $sdoor : $ecorr;
+        $map[$ox][$oy] = #($map[$ox][$oy]{t} eq 'WALL') ? $sdoor : $ecorr;
+          ($room[$roomno]{type} eq 'corridor') ? $ecorr : roomfloor($roomno)
+          #+{ t => 'ROOM',
+          #   b => 'on_black',
+          #   f => 'cyan',
+          #   c => '.',
+          # }
+            unless $map[$ox][$oy]{t} eq 'CORR';
       }
     }
     #showmap();
@@ -345,8 +667,67 @@ sub carveonespot {
   }
 }
 
+sub carvespiral {
+  my ($ox, $oy, $odx, $ody, $parent) = @_;
+  my ($x, $y, $dx, $dy) = ($ox, $oy, $odx, $ody);
+  if ($count{spiral} > 1) {
+    push @carvepoint, [$ox, $oy, $odx, $ody, $parent];
+    return;
+  }
+  my ($tillturn, $nexttillturn) = (1, 2);
+  my @exit;
+  my ($len, $turns) = (0, 0);
+  my $doublethick = (65 > int rand 100) ? 1 : 0;
+  $roomcount++;
+  my $tile = (35 > int rand 100)
+    ? +{ r => $roomcount, %$floor }
+    : +{ r => $roomcount, %$corr  };
+  while (($x > 0) and ($x < $COLNO) and
+         ($y > 0) and ($y < $ROWNO) and
+         ($map[$x][$y]{t} eq 'STONE')) {
+    $map[$x][$y] = $tile;
+      #+{ %$tile, c => ($nexttillturn % 10) };
+    if ($doublethick) {
+      my ($pdx, $pdy) = plusfortyfive($dx, $dy);
+      my $px = $x + $pdx;
+      my $py = $y + $pdy;
+      if (($px > 1) and ($px + 1 < $COLNO) and
+          ($py > 1) and ($py + 1 < $ROWNO) and
+          ($map[$px][$py]{t} eq 'STONE')) {
+        $map[$px][$py] = $tile;
+      }
+    }
+    # Now advance to the next position:
+    $x += $dx; $y += $dy;
+    $tillturn--; $len++;
+    if ($len == 3) { $count{spiral}++; }
+    if ($tillturn <= 0) {
+      my ($edx, $edy) = lessninety($dx, $dy);
+      push @exit, [$x, $y, $dx, $dy, $roomcount];
+      ($dx, $dy) = plusfortyfive($dx, $dy);
+      $tillturn = $nexttillturn;
+      $nexttillturn++;
+      $turns++;
+    }
+  }
+  if (($x > 0) and ($x < $COLNO) and
+      ($y > 0) and ($y < $ROWNO)) {
+    if ($map[$x][$y]{t} eq 'WALL') {
+      $map[$x][$y] = $sdoor;
+    }
+  }
+  my $room = +{ type => 'corridor',
+                name => 'spiral',
+                entr => [$ox, $oy, $odx, $ody],
+                len  => $len,
+                exit => [@exit],
+              };
+  $room[$roomcount] = $room;
+  return $roomcount;
+}
+
 sub carvebasiccorridor {
-  my ($ox, $oy, $odx, $ody, $parent, $corr) = @_;
+  my ($ox, $oy, $odx, $ody, $parent, $corr, $length) = @_;
   if (($ox < 5 and $odx < 1) or
       ($ox > ($COLNO - 5) and $odx > -1) or
       ($oy < 3 and $ody < 1) or
@@ -356,9 +737,9 @@ sub carvebasiccorridor {
   }
   my ($x, $y, $dx, $dy) = ($ox, $oy, $odx, $ody);
   my ($minx, $miny, $maxx, $maxy) = ($x, $y, $x, $y);
-  my $length = 3 + int rand 4;
   my $turncount = 0;
   my @proposed;
+  $length ||= 3 + int rand 4;
   for my $p (1 .. $length) {
     if ($dx and (50 > int rand 100)) {
       $x += $dx;
@@ -385,8 +766,9 @@ sub carvebasiccorridor {
   my $cando = 1;
   for my $p (1 .. $length) {
     my ($x, $y) = @{$proposed[$p]};
-    if ($x < 1 or $x >= $COLNO or $y < 1 or $y >= $COLNO
-        or $map[$x][$y]{t} ne 'STONE') {
+    if (($x <= 1) or ($x + 1 >= $COLNO) or
+        ($y <= 1) or ($y + 1 >= $COLNO) or
+        $map[$x][$y]{t} ne 'STONE') {
       $cando = 0;
       return;
     }
@@ -424,9 +806,192 @@ sub carvebasiccorridor {
   return $roomcount;
 }
 
+sub plusfortyfive {
+  # This function is designed under the assumption that the only valid
+  # coordinates are -1, 0, 1.  It rotates a rectangular-coordinate
+  # vector with respect to the origin, one eighth turn (forty-five
+  # degrees), counterclockwise.
+  my ($x, $y) = @_;
+  if (($x > 0) and ($y > 0)) {
+    return (0, $y);
+  } elsif (($x == 0) and ($y > 0)) {
+    return (-1, $y);
+  } elsif (($x < 0) and ($y > 0)) {
+    return ($x, 0);
+  } elsif (($x < 0) and ($y == 0)) {
+    return ($x, -1);
+  } elsif (($x < 0) and ($y < 0)) {
+    return (0, $y);
+  } elsif (($x == 0) and ($y < 0)) {
+    return (1, $y);
+  } elsif (($x > 0) and ($y < 0)) {
+    return ($x, 0);
+  } elsif (($x > 0) and ($y == 0)) {
+    return ($x, 1);
+  }
+}
+
+sub plusninety {
+  # This function is designed under the assumption that the only valid
+  # coordinates are -1, 0, 1.  It rotates a rectangular-coordinate
+  # vector with respect to the origin, one quarter turn (ninety
+  # degrees), counterclockwise.
+  my ($x, $y) = @_;
+  if ($y > 0) {
+    return ($y, (0 - $x));
+  } elsif (not $y) {
+    return ($y, (0 - $x));
+  } else {
+    if ($x > 0) {
+      return ((0 - $x), $y);
+    } else {
+      return ($y, (0 - $x))
+    }
+  }
+}
+
+sub lessninety {
+  # This function is designed under the assumption that the only valid
+  # coordinates are -1, 0, 1.  It rotates a rectangular-coordinate
+  # vector, with respect to the origin, one quarter turn (ninety
+  # degrees), clockwise.
+  my ($x, $y) = @_;
+  if ($x >= 0) {
+    return ((0 - $y), $x);
+  } else {
+    if ($y > 0) {
+      return ($x, (0 - $y));
+    } elsif (not $y) {
+      return ($y, $x);
+    } else {
+      return ((0 - $x), $y);
+    }
+  }
+}
+
+sub carverhombus {
+  my ($ox, $oy, $dx, $dy, $parent) = @_;
+  my $size = 3 + int rand rand 15;
+  my ($orthodx, $orthody);
+  if ($dx and $dy) {
+    push @carvepoint, [$ox, $oy, $dx, $dy, $parent];
+    return;
+  }
+  if (50 < rand 100)  {
+    ($orthodx, $orthody) = lessninety($dx, $dy);
+  } else {
+    ($orthodx, $orthody) = plusninety($dx, $dy);
+  }
+  my (@propose, @exit);
+  my $conflict = 0;
+  for my $row (1 .. $size) {
+    my $cx = $ox + $dx * $row;
+    my $cy = $oy + $dy * $row;
+    my $offset = $row - int($size / 2);
+    for my $o ($offset .. $offset + $size) {
+      my $px = $cx + $orthodx * $o;
+      my $py = $cy + $orthody * $o;
+      push @propose, [$px, $py];
+      if (($px <= 0) or ($px >= $COLNO) or
+          ($py <= 0) or ($py >= $ROWNO) or
+          $map[$px][$py]{t} ne 'STONE') {
+        $conflict++;
+      }
+    }
+    if ($row == $size) {
+      my $ex = $cx + $orthodx * ($offset + int($size / 2));
+      my $ey = $cy + $orthody * ($offset + int($size / 2));
+      push @exit, [$ex, $ey, $dx, $dy, $parent];
+    } elsif ($row == int($size / 2)) {
+      # TODO: add side exits.
+    }
+  }
+  if (not $conflict) {
+    $roomcount++;
+    for my $p (@propose) {
+      my ($x, $y, $clr) = @$p;
+      $map[$x][$y] = roomfloor($roomcount);
+    }
+    my $room = +{ type => 'room',
+                  name => 'rhombus',
+                  entr => [$ox, $oy, $dx, $dy],
+                  #orth => [$orthodx, $orthody],
+                  exit => [@exit],
+                };
+    $room[$roomcount] = $room;
+    return $roomcount;
+  }
+}
+
+sub carveyroom {
+  my ($ox, $oy, $dx, $dy, $parent) = @_;
+  if ($dx and $dy) {
+    if (50 > int rand 100) {
+      $dx = 0;
+    } else {
+      $dy = 0;
+    }
+  }
+  my $thickness = 2 + int rand 5;
+  my $stemlen   = 1 + int rand 5;
+  my $branchlen = 3 + int rand 8;
+  my $diverge = 0;
+  my ($dxa, $dya) = lessninety($dx, $dy);
+  my ($dxb, $dyb) = plusninety($dx, $dy);
+  my $conflict;
+  my @propose; # Note: some tiles will get added twice.
+  my @exit;
+  for my $row (1 .. ($stemlen + $branchlen)) {
+    if ($row > $stemlen) { $diverge++; }
+    my $cx = $ox + $dx * $row;
+    my $cy = $oy + $dy * $row;
+    for my $offset ((0 - int($thickness / 2)) .. int($thickness / 2)) {
+      # Branch A:
+      my $xa = $cx + $dxa * ($offset + $diverge);
+      my $ya = $cy + $dya * ($offset + $diverge);
+      push @propose, [$xa, $ya];
+      if (($xa <= 0) or ($xa >= $COLNO) or
+          ($ya <= 0) or ($ya >= $ROWNO) or
+          $map[$xa][$ya]{t} ne 'STONE') {
+        $conflict++;
+      }
+      # Branch B:
+      my $xb = $cx + $dxb * ($offset + $diverge);
+      my $yb = $cy + $dyb * ($offset + $diverge);
+      push @propose, [$xb, $yb];
+      if (($xb <= 0) or ($xb >= $COLNO) or
+          ($yb <= 0) or ($yb >= $ROWNO) or
+          $map[$xb][$yb]{t} ne 'STONE') {
+        $conflict++;
+      }
+    }
+    if ($row == ($stemlen + $branchlen)) {
+      push @exit, [$cx + $dxa * $diverge, $cy + $dya * $diverge, $dx, $dy, $roomcount];
+      push @exit, [$cx + $dxb * $diverge, $cy + $dyb * $diverge, $dx, $dy, $roomcount];
+    }
+  }
+  if (not $conflict) {
+    $roomcount++;
+    for my $p (@propose) {
+      my ($x, $y, $clr) = @$p;
+      $map[$x][$y] = roomfloor($roomcount);
+    }
+    my $room = +{ type => 'room',
+                  name => 'Y',
+                  entr => [$ox, $oy, $dx, $dy],
+                  exit => [@exit],
+                };
+    $room[$roomcount] = $room;
+    return $roomcount;
+  }
+}
+
 sub carvemarketplace {
   my ($ox, $oy, $dx, $dy, $parent) = @_;
-  if ($marketplacecount > 3) { return; } # Don't put too many of these on one level.
+  if (($count{marketplace} > 3) or (50 > int rand 100)) {
+    push @carvepoint, [$ox, $oy, $dx, $dy, $parent];
+    return;
+  }
   my ($x, $y);
   my $radius = rand 5;
   my $xscale = 50;# + int rand 50;
@@ -465,7 +1030,7 @@ sub carvemarketplace {
       for $x (1 .. $COLNO - 1) {
         for $y (1 .. $ROWNO - 1) {
           if (dist($cx, $cy, $x, $y, $xscale, $yscale) <= $radius) {
-            $map[$x][$y] = $floor;
+            $map[$x][$y] = roomfloor($roomcount);
             #} elsif (dist($cx, $cy, $x, $y, $xscale, $yscale) <= ($radius + 1) and
             #         $map[$x][$y]{t} eq 'STONE') {
             #  # TODO: try to work out exactly which kind of wall...
@@ -477,7 +1042,7 @@ sub carvemarketplace {
           }
         }
       }
-      $marketplacecount++;
+      $count{marketplace}++;
       push @exit, [$minx, $cy, -1, 0, $roomcount];
       push @exit, [$maxx, $cy,  1, 0, $roomcount];
       push @exit, [$cx, $miny, 0, -1, $roomcount];
@@ -489,7 +1054,7 @@ sub carvemarketplace {
                     maxx => $maxx,
                     maxy => $maxy,
                     cntr => [$cx, $cy],
-                    radi => $radius,
+                    size => $radius,
                     xsca => $xscale,
                     ysca => $yscale,
                     entr => [$ox, $oy, $dx, $dy],
@@ -506,7 +1071,7 @@ sub carvemarketplace {
 
 sub carvetee {
   my ($ox, $oy, $odx, $ody, $parent) = @_;
-  my @proposed;
+  #my @propose;
   my ($dx, $dy) = ($odx, $ody);
   my ($x, $y);
   if ($dx and $dy) {
@@ -575,16 +1140,16 @@ sub carvetee {
       for $y ($tminy .. $tmaxy) {
         $map[$x][$y] = ($y == $tminy or $y == $tmaxy)
           ? $hwall : ($x == $tminx or $x == $tmaxx)
-          ? $vwall : $floor;
+          ? $vwall : roomfloor($roomcount);
       }
     }
     for $x ($bminx .. $bmaxx) {
       for $y ($bminy .. $bmaxy) {
         $map[$x][$y] = (($x >= $tminx) and ($x <= $tmaxx) and
                         ($y >= $tminy) and ($y <= $tmaxy))
-              ? $floor : ($y == $bminy or $y == $bmaxy)
+              ? roomfloor($roomcount) : ($y == $bminy or $y == $bmaxy)
               ? $hwall : ($x == $bminx or $x == $bmaxx)
-              ? $vwall : $floor;
+              ? $vwall : roomfloor($roomcount);
       }
     }
     my @exit;
@@ -603,11 +1168,11 @@ sub carvetee {
     }
     my $room = +{ type => 'room',
                   name => 'tee',
-                  tdim => ($dx ? 'x' : 'y'),
-                  bmnx => $bminx,
-                  bmxx => $bmaxx,
-                  bmny => $bminy,
-                  bmxy => $bmaxy,
+                  #tdim => ($dx ? 'x' : 'y'),
+                  minx => $bminx,
+                  maxx => $bmaxx,
+                  miny => $bminy,
+                  maxy => $bmaxy,
                   tmnx => $tminx,
                   tmxx => $tmaxx,
                   tmny => $tminy,
@@ -617,6 +1182,75 @@ sub carvetee {
                 };
     $room[$roomcount] = $room;
     return $roomcount;
+  }
+}
+
+sub carveoctagon {
+  #   xxx
+  #  xxxxx
+  # xxxxxxx
+  # xxxxxxx
+  # xxxxxxx
+  #  xxxxx
+  #   xxx
+  my ($ox, $oy, $dx, $dy, $parent) = @_;
+  if ($dx and $dy) {
+    # Don't want to code diagonal octagon tonight, try something else here later:
+    push @carvepoint, [$ox, $oy, $dx, $dy, $parent];
+    return;
+  }
+  for my $size (reverse (1 .. 2 + int rand rand 5)) {
+    my (@propose, @exit, $row, $conflict);
+    my @w = (($size .. (2 * $size)), ((2 * $size) x ($size - 2)), reverse ($size .. (2 * $size)));
+    for my $w (@w) {
+      $row++;
+      if ($dx) {
+        my $x = $ox + $row * $dx;
+        for my $y (($oy - int($w / 2)) .. ($oy + int($w / 2))) {
+          push @propose, [$x, $y];
+          if (($x <= 0) or ($y <= 0) or
+              ($x >= $COLNO) or ($y >= $ROWNO) or
+              $map[$x][$y]{t} ne 'STONE') {
+            $conflict++;
+          }
+        }
+      } else {
+        my $y = $oy + $row * $dy;
+        for my $x (($ox - int($w / 2)) .. ($ox + int($w / 2))) {
+          push @propose, [$x, $y];
+          if (($x < 0) or ($y < 0) or
+              ($x > $COLNO) or ($y > $ROWNO) or
+              $map[$x][$y]{t} ne 'STONE') {
+            $conflict++;
+          }
+        }
+      }
+    }
+    if (not $conflict) {
+      $roomcount++;
+      my $half = int((scalar @w) / 2);
+      if ($dx) {
+        push @exit, [$ox + (scalar @w) * $dx, $oy, $dx, $dy, $roomcount];
+        push @exit, [$ox + $half * $dx, $oy - $half, 0, -1, $roomcount];
+        push @exit, [$ox + $half * $dx, $oy + $half, 0,  1, $roomcount];
+      } else {
+        push @exit, [$ox, $oy + (scalar @w) * $dy, $dx, $dy, $roomcount];
+        push @exit, [$ox - $half, $oy + $half * $dy, -1, 0, $roomcount];
+        push @exit, [$ox + $half, $oy * $half * $dy,  1, 0, $roomcount];
+      }
+      for my $p (@propose) {
+        my ($x, $y) = @$p;
+        $map[$x][$y] = roomfloor($roomcount);
+      }
+      my $room = +{ type => 'room',
+                    name => 'octagon',
+                    size => $size,
+                    entr => [$ox, $oy, $dx, $dy],
+                    exit => [@exit],
+                  };
+      $room[$roomcount] = $room;
+      return $roomcount;
+    }
   }
 }
 
@@ -640,7 +1274,7 @@ sub carverectangle {
     }
     if ($minx > $maxx) { ($minx, $maxx) = ($maxx, $minx); }
     if ($miny > $maxy) { ($miny, $maxy) = ($maxy, $miny); }
-    if ($minx < 0 or $maxx > $COLNO or $miny < 0 or $maxy > $ROWNO) {
+    if ($minx < 0 or $maxx >= $COLNO or $miny < 0 or $maxy >= $ROWNO) {
       #print ".";
       next;
     }
@@ -659,13 +1293,15 @@ sub carverectangle {
       for $x ($minx .. $maxx) {
         for $y ($miny .. $maxy) {
           $map[$x][$y] =
-            ($x == $minx or $x == $maxx or $y == $miny or $y == $maxy)
-              ? +{ t => 'WALL',
-                   b => 'on_black',
-                   f => 'white',
-                   c => (($y == $miny or $y == $maxy) ? '-' : '|'),
-                 }
-                : $floor;
+            ($x == $minx or $y == $miny # or $x == $maxx or $y == $maxy
+            )
+              #? +{ t => 'WALL',
+              #     b => 'on_black',
+              #     f => 'white',
+              #     c => (($y == $miny or $y == $maxy) ? '-' : '|'),
+              #   }
+              ? $hwall
+              : roomfloor($roomcount);
         }
       }
       # Now assemble a list of exit points...
@@ -734,3 +1370,79 @@ sub carverectangle {
   return;
 }
 
+sub neighbor {
+  my ($x, $y, $wd) = @_;
+  my $nx = $x + $wdir{$wd}{dx};
+  my $ny = $y + $wdir{$wd}{dy};
+  if (($nx < 0) or ($nx > $COLNO) or
+      ($ny < 0) or ($ny > $ROWNO)) {
+    return;
+  }
+  #print "[$wd of ($x,$y): ($nx,$ny)] ";
+  return $map[$nx][$ny];
+}
+
+sub solidneighborcount {
+  my ($x, $y, $countsecrets, $countdoors, $countcorridors) = @_;
+  my $count = 0;
+  for my $nx (($x - 1) .. ($x + 1)) {
+    for my $ny (($y - 1) .. ($y + 1)) {
+      if (($nx == $x) and ($ny == $y)) {
+        # The tile itself is not a neighbor.
+      } elsif (($nx < 0) or ($nx > $COLNO) or
+               ($ny < 0) or ($ny > $ROWNO) or
+               ($map[$nx][$ny]{t} eq 'WALL') or
+               ($map[$nx][$ny]{t} eq 'STONE') or
+               ($map[$nx][$ny]{f} eq 'blue' and $countsecrets) or
+               ($map[$nx][$ny]{t} eq 'DOOR' and $countdoors) or
+               ($map[$nx][$ny]{t} eq 'CORR' and $countcorridors)) {
+        $count++;
+      }
+    }
+  }
+  return $count;
+}
+
+sub orthogonalfloorcount {
+  my ($x, $y) = @_;
+  my $count;
+  for my $wd (keys %wdir) {
+    my $neighbor = neighbor($x, $y, $wd);
+    #my $nx = $x + $wdir{$wd}{dx};
+    #my $ny = $y + $wdir{$wd}{dy};
+    #if (($nx >= 0) and ($nx <= $COLNO) and
+    #    ($ny >= 0) and ($ny <= $ROWNO) and
+    #    $map[$nx][$ny]{t} eq 'ROOM') {
+    if ($neighbor and $$neighbor{t} eq 'ROOM') {
+      $count++;
+    }
+  }
+  return $count;
+}
+
+sub fixwalldirs {
+  my ($x, $y) = @_;
+  if ($map[$x][$y]{t} eq 'WALL') {
+    my $wdirs = 0;
+    for my $wd (keys %wdir) {
+      my $neighbor = neighbor($x, $y, $wd);
+      #my $nx = $x + $wdir{$wd}{dx};
+      #my $ny = $y + $wdir{$wd}{dy};
+      #if (($nx >= 0) and ($nx <= $COLNO) and
+      #    ($ny >= 0) and ($ny <= $ROWNO) and
+      #    ($map[$nx][$ny]{t} eq 'WALL' or
+      #     $map[$nx][$ny]{t} eq 'DOOR')) {
+      if ($neighbor and (($$neighbor{t} eq 'WALL') or
+                         ($$neighbor{t} eq 'DOOR') or
+                         # treat secret corridors as walls here:
+                         ($$neighbor{t} eq 'CORR' and $$neighbor{f} eq 'blue'))) {
+        $wdirs += $wdir{$wd}{bit};
+      }
+    }
+    $map[$x][$y] = +{ t => 'WALL',
+                      c => ($wallglyph[$wdirs] || $map[$x][$y]{c} || '-'),
+                      b => 'on_black',
+                      f => 'white',
+                    };
+  }
+}
