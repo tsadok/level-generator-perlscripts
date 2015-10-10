@@ -76,27 +76,7 @@ sub generate {
     }
     showmap($map) if (($debug > 3) and (not $pi % 20));
   }
-  # Surrouned the outer edge with unchoppable trees.
-  for my $x (0 .. $COLNO) {
-    $$map[$x][0] = +{ type => 'TREE',
-                      char => '#',
-                      fg   => 'green',
-                      bg   => 'on_black',  };
-    $$map[$x][$ROWNO] = +{ type => 'TREE',
-                           char => '#',
-                           fg   => 'green',
-                           bg   => 'on_black',  };
-  }
-  for my $y (0 .. $ROWNO) {
-    $$map[0][$y] = +{ type => 'TREE',
-                      char => '#',
-                      fg   => 'green',
-                      bg   => 'on_black',  };
-    $$map[$COLNO][$y] = +{ type => 'TREE',
-                           char => '#',
-                           fg   => 'green',
-                           bg   => 'on_black',  };
-  }
+
   # Now let's place a few denser clusters of trees
   # interspersed with clearings.
   my $minx = -2;
@@ -141,8 +121,8 @@ sub generate {
                                               bg   => 'on_black', });
       } elsif (65 > int rand 100) {
         placeblob($map, $cx, $cy, $radius, +{ type => 'ROOM',
-                                              char => '.',
-                                              fg   => ($debug ? 'red' : 'green'),
+                                              char => $floorchar,
+                                              fg   => ($debug ? 'red' : 'white'),
                                               bg   => 'on_black', });
       }
 
@@ -151,18 +131,72 @@ sub generate {
     $minx = $maxx + 1;
   }
 
-  # And let's put some pools of water on the map...
-  for (1 .. 6) {
-    placeblob($map,
-              int rand $COLNO,
-              int rand $ROWNO,
-              2 + int rand 5,
-              +{ type => 'POOL',
-                 char => '}',
-                 fg   => 'blue',
-                 bg   => 'on_black',
-               });
+  # Surrouned the outer edge with unchoppable trees.
+  for my $x (0 .. $COLNO) {
+    $$map[$x][0] = +{ type => 'TREE',
+                      char => '#',
+                      fg   => 'green',
+                      bg   => 'on_black',  };
+    $$map[$x][$ROWNO] = +{ type => 'TREE',
+                           char => '#',
+                           fg   => 'green',
+                           bg   => 'on_black',  };
   }
+  for my $y (0 .. $ROWNO) {
+    $$map[0][$y] = +{ type => 'TREE',
+                      char => '#',
+                      fg   => 'green',
+                      bg   => 'on_black',  };
+    $$map[$COLNO][$y] = +{ type => 'TREE',
+                           char => '#',
+                           fg   => 'green',
+                           bg   => 'on_black',  };
+  }
+
+  # Now let's see about some water maybe...
+  if (25 > int rand 100) {
+    # pools of water
+    my $pcount = 3 + int rand 6;
+    print "$pcount Pools\n" if $debug;
+    for (1 .. $pcount) {
+      placeblob($map,
+                int rand $COLNO,
+                int rand $ROWNO,
+                2 + int rand 5,
+                +{ type => 'POOL',
+                   char => '}',
+                   fg   => 'blue',
+                   bg   => 'on_black',
+                 }, 1);
+    }
+  } elsif (33 > int rand 100) {
+    # edge-to-edge river
+    my $edgeone = $dir_available[rand @dir_available];
+    my $edgetwo = $wdir{$edgeone}{clockwise};
+    if (70 > int rand 100) {
+      # usually go clear across
+      $edgetwo = $wdir{$edgetwo}{clockwise};
+    }
+    my ($xone, $yone) = spotonedge($edgeone, 5, 2);
+    my ($xtwo, $ytwo) = spotonedge($edgetwo, 5, 2);
+    print "River from $edgeone ($xone, $yone) to $edgetwo ($xtwo, $ytwo)\n" if $debug;
+    makeriver($map, $xone, $yone, $xtwo, $ytwo,
+              +{ type => 'POOL', char => '}', fg => 'blue', bg => 'on_black', });
+  } elsif (50 > int rand 100) {
+    # Single lake with a river to the edge.
+    print "Lake and river.\n" if $debug;
+    my $radius = 5 + int rand int($ROWNO / 3);
+    my $lakex  = 5 + $radius + int rand($COLNO - 2 * $radius - 10);
+    my $lakey  = 2 + $radius + int rand($ROWNO - 2 * $radius - 4);
+    my $redge  = $dir_available[rand @dir_available];
+    my ($edgex, $edgey) = spotonedge($redge, 5, 2);
+    print "Lake at ($lakex, $lakey) radius $radius; river to $redge ($edgex, $edgey)\n" if $debug > 1;
+    makeriver($map, $lakex, $lakey, $edgex, $edgey,
+              +{ type => 'POOL', char => '}', fg => 'blue', bg => 'on_black', });
+    placeblob($map, $lakex, $lakey, $radius,
+              +{ type => 'POOL', char => '}', fg => 'blue', bg => 'on_black', }, 1);
+  }
+
   # Place the up stairs...
   my ($x, $y) = (-1, -1);
   my $tries = 0;
@@ -176,12 +210,12 @@ sub generate {
   placeblob($map, $x, $y, 2, +{ type => 'ROOM',
                                 char => $floorchar,
                                 bg   => 'on_black',
-                                fg   => 'white', });
+                                fg   => 'white', }, 1);
   $$map[$x][$y] = +{ type => 'STAIR',
                     char => '<',
                     bg   => 'on_red',
                     fg   => 'white',
-                  };
+                   };
   # And the down stairs...
   ($x, $y) = (-1, -1);
   $tries = 0;
@@ -195,7 +229,7 @@ sub generate {
   placeblob($map, $x, $y, 2, +{ type => 'ROOM',
                                 char => $floorchar,
                                 bg   => 'on_black',
-                                fg   => 'white', });
+                                fg   => 'white', }, 1);
   $$map[$x][$y] = +{ type => 'STAIR',
                     char => '>',
                     bg   => 'on_red',
@@ -205,12 +239,47 @@ sub generate {
   return $map;
 }
 
+sub makeriver {
+  my ($map, $x, $y, $tx, $ty, $liquid) = @_;
+  my $tries = 0;
+  my $twisty = 5 + int rand 20;
+  my $minwidth = (50 > int rand 100) ? 2 : 1;
+  my $maxwidth = $minwidth + (50 > int rand 100) ? 2 : 1;
+  my $avgwidth = int(($minwidth + $maxwidth) / 2);
+  my $width = $minwidth + int rand($maxwidth - $minwidth);
+  print "Width $minwidth - $maxwidth, avg $avgwidth; twisty $twisty\n" if $debug > 1;
+  while ((($x ne $tx) or ($y ne $ty)) and ($tries++ < (2 * ($COLNO + $ROWNO)))) {
+    my $progress = ((100 - $twisty) > int rand 100) ? 1 : -1;
+    my $xneed = 3 + abs($tx - $x);
+    my $yneed = 3 + abs($ty - $y);
+    if (50 > int rand 100) {
+      $width += (50 > int rand 100) ? -1 : 1;
+      if ($width > $maxwidth) {
+        $width--;
+      } elsif ($width < $minwidth) {
+        $width++;
+      }
+    }
+    print "($x,$y), n($xneed,$yneed) " if $debug > 3;
+    if ((100 * $xneed / ($xneed + $yneed)) > int rand 100) {
+      print "x $progress " if $debug > 5;
+      $x += $progress * (($tx > $x) ? 1 : -1);
+    } else {
+      print "y $progress " if $debug > 5;
+      $y += $progress * (($ty > $y) ? 1 : -1);
+    }
+    placeblob($map, $x, $y, (int(($width * 2 + 1) / 4) + 1), $liquid);
+  }
+  print " $tries\n" if $debug > 2;
+}
+
 sub placeblob {
-  my ($map, $cx, $cy, $radius, $terrain) = @_;
+  my ($map, $cx, $cy, $radius, $terrain, $margin) = @_;
   for my $x (($cx - $radius) .. ($cx + $radius)) {
     for my $y (($cy - int($radius * 2 / 3)) .. ($cy + int($radius * 2 / 3))) {
       my $dist = int sqrt((($cx - $x) * ($cx - $x)) + (($cy - $y) * ($cy - $y)));
-      if (($x > 0) and ($x < $COLNO) and ($y > 0) and ($y < $ROWNO) and
+      if (($x >= 0 + $margin) and ($x <= $COLNO - $margin) and
+          ($y >= 0 + $margin) and ($y <= $ROWNO - $margin) and
           ((int rand $dist) < (int rand $radius))) {
         $$map[$x][$y] = { %$terrain };
       }
@@ -250,6 +319,37 @@ sub countortho {
     }
   }
   return $count;
+}
+
+sub spotonedge {
+  my ($wd, $margin, $ymargin) = @_;
+  # The wdir is which direction you have to move to hit (usually, to
+  # hit an adjacent wall immediately, but in our case, to hit the edge
+  # in question if you keep going), realized mainly in the dx and dy
+  # values.  To pick a spot _on_ that edge, we want to pick a random
+  # coordinate for the dimension with a delta of 0, so that we can be
+  # anywhere along the edge.  For a delta of -1 we want 0, or for a
+  # delta of +1 we want $COLNO or $ROWNO as the case may be. There's
+  # probably some convoluted arithmetic formula I could use to work
+  # this all out in a single expression, but for simplicity and
+  # easy code maintainability I'm going to go with if/elsif/else.
+  my ($ex, $ey);
+  $ymargin ||= $margin;
+  if ($wdir{$wd}{dx} > 0) { # East edge
+    $ex = $COLNO;
+  } elsif ($wdir{$wd}{dx} < 0) { # West edge
+    $ex = 0;
+  } else {
+    $ex = $margin + int rand($COLNO - 2 * $margin);
+  }
+  if ($wdir{$wd}{dy} > 0) { # South edge
+    $ey = $ROWNO
+  } elsif ($wdir{$wd}{dy} < 0) { # North edge
+    $ey = 0;
+  } else {
+    $ey = $ymargin + int rand($ROWNO - 2 * $ymargin);
+  }
+  return ($ex, $ey);
 }
 
 sub fixupwalls {
