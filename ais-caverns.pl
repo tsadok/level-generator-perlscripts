@@ -8,8 +8,11 @@
 # wall if there are any adjacent walls otherwise. The remaining case
 # is no walls; in that case, we choose at random.
 
+# Afterward, a few areas of floor are converted into water or lava.
+
 use warnings;
 use strict;
+use Term::ANSIColor;
 
 use constant width => 80;
 use constant height => 21;
@@ -22,11 +25,24 @@ use constant CORRIDOR => 16;
 use constant SOLID => 32;
 use constant EDGE => 64;
 use constant UNDECIDED => 128;
+use constant WATER => 256;
+use constant LAVA => 512;
 
 my @map;
 my @coords;
 
-my $depthfraction = $ARGV[0];
+my $dohtml = 0;
+open HTML, ">>", "gehennom-maps.html" if $dohtml;
+
+sub randomdepth {
+  my $d = sprintf "%0.3f", (rand(100) / 100);
+  print "Random Depth: $d\n";
+  return $d;
+}
+
+my $depthfraction = $ARGV[0] || randomdepth();
+print HTML qq[<div class="dungeon">
+<div class="dungeondepth">Depth Fraction: $depthfraction</div>\n] if $dohtml;
 
 for my $x (0 .. (width-1)) {
     for my $y (0 .. (height-1)) {
@@ -277,7 +293,7 @@ sub mark_corridor_secret {
     my ($x, $y, $ox, $oy) = @_;
     $map[$x][$y] & CORRIDOR or return 0;
     $map[$x][$y] & SOLID and return 0;
-    my @neighbours = neighbours $x, $y;    
+    my @neighbours = neighbours $x, $y;
     my $opencount = 0;
     $neighbours[$_] & SOLID or $opencount++ for (0, 2, 4, 6);
     $opencount > 2 and return 0;
@@ -305,11 +321,72 @@ for my $x (0 .. (width-1)) {
     }
 }
 
+my $liquid   = ($depthfraction > (rand(100) / 90)) ? LAVA : WATER;
+my $liqcount = 0;
+for (1 .. int((rand(6) * rand($depthfraction * 8)) - 1.5)) {
+  $liqcount++;
+  my $cx = int rand width;
+  my $cy = int rand height;
+  my $radius  = 2 + rand rand rand 7;
+  my $stretch = 1 + ((rand 50) / 100);
+  my $jitter  = (rand 50) / 20;
+  for my $x (($cx - $radius * $stretch) .. ($cx + $radius * $stretch)) {
+    if (($x > 0) and ($x + 1 < width)) {
+      for my $y (($cy - $radius) .. ($cy + $radius)) {
+        if (($y > 0) and ($y + 1 < height)) {
+          my $distance = sqrt((($x - $cx) / $stretch)**2 + ($y - $cy) ** 2) + rand $jitter;
+          if (($distance <= $radius) and (not ($map[$x][$y] & SOLID))
+                                     and (not ($map[$x][$y] & CORRIDOR))) {
+            $map[$x][$y] |= $liquid;
+          }}}}}}
+my $plural = ($liqcount > 1) ? "s" : '';
+my $liquidcount = $liqcount ? "($liqcount pool$plural of " . ($liquid eq LAVA ? "lava" : "water") . ")"
+  : "(No liquid)";
+print HTML qq[<div class="liquidcount">$liquidcount</div>\n] if $dohtml;
+print $liquidcount . "\n";
+
+print HTML qq[<div class="dungeonmap">\n] if $dohtml;
 for my $y (0 .. (height-1)) {
+    print HTML qq[  <div class="dungeonrow">] if $dohtml;
     for my $x (0 .. (width-1)) {
+        if (($map[$x][$y] & (SOLID)) and ($map[$x][$y] & (CORRIDOR))) {
+          print HTML qq[<span class="secretdoor">] if $dohtml;
+          print color 'red on_yellow';
+        } elsif ($map[$x][$y] & (SOLID)) {
+          print HTML qq[<span class="wall">] if $dohtml;
+          print color 'red';
+        } elsif ($map[$x][$y] & LAVA) {
+          print HTML qq[<span class="lava">] if $dohtml;
+          print color 'bold yellow on_red';
+        } elsif ($map[$x][$y] & WATER) {
+          print HTML qq[<span class="water">] if $dohtml;
+          print color 'bold cyan on_blue';
+        } elsif (($map[$x][$y] & CORRIDOR) and
+                 ($map[$x][$y] & SOLID)) {
+          print HTML qq[<span class="secretcorridor">] if $dohtml;
+          print color 'blue';
+        } elsif ($map[$x][$y] & (CORRIDOR)) {
+          print HTML qq[<span class="corridor">] if $dohtml;
+          print color 'bold black';
+        } else {
+          print HTML qq[<span class="floor">] if $dohtml;
+          print color 'yellow' ;
+        }
         print
             $map[$x][$y] & SOLID ? $walls[$map[$x][$y] & 31] :
+            $map[$x][$y] & (WATER | LAVA) ? '}' :
             $map[$x][$y] & CORRIDOR ? '#' : '.';
+        print color 'reset';
+        my $wallchar = $walls[$map[$x][$y] & 31]; $wallchar =~ s/ /&nbsp;/;
+        if ($dohtml) {
+          print HTML
+            $map[$x][$y] & SOLID ? $wallchar :
+            $map[$x][$y] & (WATER | LAVA) ? '}' :
+            $map[$x][$y] & CORRIDOR ? '#' : '.';
+          print HTML "</span>";
+        }
     }
+    print HTML "</div>\n" if $dohtml;
     print "\n";
 }
+print HTML "</div></div>\n\n" if $dohtml;
