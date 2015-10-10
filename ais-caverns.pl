@@ -45,7 +45,7 @@ my @coords;
 my ($upstair, $dnstair);
 
 my %arg;
-my $depthfraction;
+my $depth;
 my $liqcount = 0;
 my $river    = 0;
 my $liquid;
@@ -65,13 +65,14 @@ my $dohtml = 0;
 my @walls = qw/! ─ │ └ ─ ─ ┘ ┴ │ ┌ │ ├ ┐ ┬ ┤ ┼
                ! ═ ║ ╚ ═ ═ ╝ ╩ ║ ╔ ║ ╠ ╗ ╦ ╣ ╬/;
 # (The second batch, with the CORRIDOR bit (16) also set, are doors?)
+$walls[0] = ' ';
 
 
 while (@ARGV) {
   my $arg = shift @ARGV;
-  if ($arg =~ /^([0-9.]+)$/) {
-    $depthfraction = $arg;
-  } elsif ($arg =~ /^(wiz|fake)tower\d$/) {
+  if ($arg =~ /^([0-9]+)$/) {
+    $depth = $arg; # This is an integer now, from 0 to 100.
+  } elsif ($arg =~ /^(wiz|fake)tower\d|specialroom$/) {
     $arg{embed}  = $arg;
   } elsif ($arg =~ /html/) {
     $dohtml = 1;
@@ -80,9 +81,8 @@ while (@ARGV) {
   }
 }
 
-$depthfraction = randomdepth() if not defined $depthfraction;
 sub randomdepth {
-  my $d = sprintf "%0.3f", (rand(100) / 100);
+  my $d = int rand 100;
   print "Random Depth: $d\n";
   return $d;
 }
@@ -148,12 +148,18 @@ sub block_point {
 }
 
 sub markwalldirs {
-  my ($x, $y, $add, $subtract) = @_;
+  my ($x, $y, $add) = @_;
   if ($map[$x][$y] ne FLOOR) {
     # FLOOR is the only exception because CORRIDOR can mean door.
     for my $dir (@$add) {
       $map[$x][$y] |= $dir;
     }
+  }
+}
+sub unmarkwalldir {
+  my ($x, $y, $subtract) = @_;
+  if ($map[$x][$y] ne FLOOR) {
+    # FLOOR is the only exception because CORRIDOR can mean door.
     for my $dir (@$subtract) {
       $map[$x][$y] &= ~$dir;
     }
@@ -161,7 +167,7 @@ sub markwalldirs {
 }
 
 sub placestairs {
-  my ($trycount) = @_;
+  my ($trycount);
   ++$trycount;
   my $stairx = 1;
   my @shuffy = (1 .. ($height - 1));
@@ -180,7 +186,6 @@ sub placestairs {
   }
   while ($prob++ <= 2000 and not $upstair) {
     while ($stairx < $width and not $upstair) {
-      #warn "shuffy: " . (join " ", map { qq['$_'] } @shuffy) . "\n";
       for my $stairy (@shuffy) {
         if (($map[$stairx][$stairy] eq FLOOR) and not $upstair
             and ($prob >= rand 1000)) {
@@ -213,11 +218,13 @@ sub placestairs {
     }
   }
   if ($trycount < 1000 and not ($upstair and $dnstair)) {
-    placestairs();
+    placestairs($trycount);
   }
 }
 
 sub generate_level {
+
+  $depth = randomdepth() if not defined $depth;
 
   # Initialize to undecided...
   for my $x (0 .. ($width - 1)) {
@@ -264,9 +271,8 @@ sub generate_level {
 
       my $newval = $transitioncount > 2 ? FLOOR :
                    $transitioncount == 2 ? SOLID :
-                   ((rand 1) < ($depthfraction *
-                                $depthfraction *
-                                $depthfraction)) ? SOLID : FLOOR;
+                   ((rand 100) < ($depth * $depth * $depth
+                                  / (100 * 100))) ? SOLID : FLOOR;
 
       # In order to get larger blocks of walls, if we just created a dead end,
       # we mark that cell as # even if it was previously ., because we know
@@ -367,7 +373,7 @@ sub generate_level {
 
   # Work out where walls should be. We start by drawing a square around every
   # open floor space, then remove the parts of the square that do not connect
-  # to other walls.
+  # to other walls, and then each piece only gets drawn if it's on a solid tile.
 
   # I am leaving some bitwise arithmetic in this section of the code
   # because unlike with all that gratuitous &= ~CORRIDOR garbage
@@ -375,7 +381,6 @@ sub generate_level {
 
   # Wall directions:
   # Add the wall dirs needed so that floor areas are surrounded:
-  $walls[0] = ' ';
   for my $x (1 .. ($width - 2)) {
     for my $y (1 .. ($height - 2)) {
       if ($map[$x][$y] eq FLOOR) {
@@ -396,19 +401,19 @@ sub generate_level {
     for my $y (0 .. ($height - 1)) {
       if (($x < $width - 1) and not
           ($map[$x+1][$y] & (SOLID | CORRIDOR))) {
-        markwalldirs($x, $y, undef, [RIGHT]);
+        unmarkwalldir($x, $y, [RIGHT]);
       }
       if (($x > 0) and not
           ($map[$x-1][$y] & (SOLID | CORRIDOR))) {
-        markwalldirs($x, $y, undef, [LEFT]);
+        unmarkwalldir($x, $y, [LEFT]);
       }
       if (($y < $height - 1) and not
           ($map[$x][$y+1] & (SOLID | CORRIDOR))) {
-        markwalldirs($x, $y, undef, [DOWN]);
+        unmarkwalldir($x, $y, [DOWN]);
       }
       if (($y > 0) and not
           ($map[$x][$y-1] & (SOLID | CORRIDOR))) {
-        markwalldirs($x, $y, undef, [UP]);
+        unmarkwalldir($x, $y, [UP]);
       }
     }
   }
@@ -435,30 +440,6 @@ sub generate_level {
           if ($map[$x][$y] & CORRIDOR) {
             # This almost never happens.
             $map[$x][$y] = FLOOR;
-          }
-        }
-
-        my $corridorcount = 0;
-        for my $nidx (0, 2, 4, 6) {
-          if ($neighbours[$nidx] & CORRIDOR and
-              not ($neighbours[$nidx] & SOLID)) {
-            $corridorcount++;
-          }
-        }
-
-        if ($corridorcount >= 3) {
-          if (($map[$x+1][$y] & (CORRIDOR | 15)) == (CORRIDOR | UP | DOWN)
-              and $map[$x+1][$y+1] & SOLID and $map[$x+1][$y-1] & SOLID) {
-            $map[$x+1][$y] |= SOLID;
-          } elsif (($map[$x-1][$y] & (CORRIDOR | 15)) == (CORRIDOR | UP | DOWN)
-                   and $map[$x-1][$y+1] & SOLID and $map[$x-1][$y-1] & SOLID) {
-            $map[$x-1][$y] |= SOLID;
-          } elsif (($map[$x][$y+1] & (CORRIDOR | 15)) == (CORRIDOR | LEFT | RIGHT)
-                   and $map[$x+1][$y+1] & SOLID and $map[$x-1][$y+1] & SOLID) {
-            $map[$x][$y+1] |= SOLID;
-          } elsif (($map[$x][$y-1] & (CORRIDOR | 15)) == (CORRIDOR | LEFT | RIGHT)
-                   and $map[$x+1][$y-1] & SOLID and $map[$x-1][$y-1] & SOLID) {
-            $map[$x][$y-1] |= SOLID;
           }
         }
       }
@@ -524,10 +505,10 @@ sub generate_level {
   ##  }
 
   # Before laying down liquids, reserve space for the stairs...
-  placestairs();
+  placestairs(0);
 
-  $liquid   = ($depthfraction > (rand(100) / 90)) ? LAVA : WATER;
-  if (2 > int rand($depthfraction * 100)) {
+  $liquid   = ($depth > (rand(1000) / 9)) ? LAVA : WATER;
+  if (2 > int rand $depth) {
     $river = 1;
     my $minbreadth = 1 + rand 1;
     my $cx = ($width / 4) + rand($width / 2);
@@ -554,7 +535,7 @@ sub generate_level {
       $cy += $cydir;
     }
   } else {
-    for (1 .. int((rand(6) * rand($depthfraction * 8)) - 1.5)) {
+    for (1 .. int((rand(6) * rand($depth * 8) - 150) / 100)) {
       $liqcount++;
       my $cx = int rand $width;
       my $cy = int rand $height;
@@ -573,7 +554,7 @@ sub show_level {
   open HTML, ">>", "gehennom-maps.html" if $dohtml;
 
   print HTML qq[<div class="dungeon">
-<div class="dungeondepth">Depth Fraction: $depthfraction</div>\n] if $dohtml;
+<div class="dungeondepth">Depth: $depth</div>\n] if $dohtml;
 
   print HTML qq[<div class="liquidcount">$liquidcount</div>\n] if $dohtml;
   print $liquidcount . "\n";
@@ -757,6 +738,26 @@ sub doembed {
                         'W--.--W',
                         'WW---WW',
                         'WWWWWWW');
+  }
+  elsif ($special eq 'specialroom') {
+    # Several things about this don't work right.
+    my $width  = 5 + int rand 7;
+    my $height = 4 + int rand 3;
+    # Note: these width and height figures include the walls.
+    @embed = map {
+      my $y = $_;
+      [ map {
+        my $x = $_;
+        my $tile = UNDECIDED;
+        if (($x == 0) or ($y == 0) or ($x == $width) or ($y == $height)) {
+          $tile = SOLID;
+        } else {
+          $tile = FLOOR;
+        }
+        $tile;
+      } 1 .. $width
+      ];
+    } 1 .. $height;
   }
   my ($xoffset, $yoffset) = embedcenter(@embed);
   placeembed([@embed], $xoffset, $yoffset);
