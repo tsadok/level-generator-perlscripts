@@ -4,7 +4,7 @@ use utf8;
 use open ':encoding(UTF-8)';
 use open ":std";
 
-my $debug        = 0;#3;
+my $debug        = 3;
 my $usecolor     = 1;
 my $numofclosets = 2 + int rand 5;
 my $minbuffer    = 2;
@@ -14,17 +14,17 @@ my $ROWNO        = 20;#35;#20;
 my $floorchar    = '·';
 my $buffersolidp = 30 + int rand 60; # probability for diagonal buffers to close up their gaps.
 my $fgrowfigure  = 6 + int rand 12;  # floor areas grow if countortho(... 'ROOM') > int rand $fgrowfigure
-my $wgrowfigure  = 10 + (int rand 30) + 3 * $numofclosets; # similar, but for walls
-my $sgrowfigure  = 12; # similar, but for stone (which grows wall, not more stone)
+my $wgrowfigure  = 8 + int rand 30;  # similar, but for walls
+my $sgrowfigure  = 4; # similar, but for stone (which grows wall, not more stone)
 my $vaultprob    = 50;
 my $undozones    = int rand 2;# + int rand int($ROWNO * $COLNO / 800);
-my $stoneblobs   = 5 + int rand int($ROWNO * $COLNO / 200); # likely some will fail
+my $stoneblobs   = 5 + int rand int($ROWNO * $COLNO / 20); # likely some will fail
 my $undogrowprob = 50 + int rand 30;
 my $undoturnprob = 20 + int rand 50;
 my $undothickenp = 50 + int rand 30;
 my $maxthickness = 2 + int rand 5;
 my $extraseeds   = 6 - (int rand $numofclosets);
-my $vaultwhere   = "";
+my $perturbpath  = 5;
 
 if ($undothickenp < $undogrowprob) {
   ($undothickenp, $undogrowprob) = ($undogrowprob, $undothickenp);
@@ -75,15 +75,15 @@ sub generate {
   } 0 .. $ROWNO ] } 0 .. $COLNO;
   for my $x (0 .. $COLNO) {
     $map[$x][0]          = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
-    $map[$x][1]          = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+    #$map[$x][1]          = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
     $map[$x][$ROWNO]     = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
-    $map[$x][$ROWNO - 1] = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+    #$map[$x][$ROWNO - 1] = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
   }
   for my $y (1 .. ($ROWNO - 1)) {
     $map[0][$y]          = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
-    $map[1][$y]          = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+    #$map[1][$y]          = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
     $map[$COLNO][$y]     = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
-    $map[$COLNO - 1][$y] = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+    #$map[$COLNO - 1][$y] = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
   }
   for my $cnum (0 .. ($numofclosets - 1)) {
     my $tries = 0;
@@ -120,6 +120,8 @@ sub generate {
                             cy  => $cy,
                             dx  => $wdir{$cd}{dx},
                             dy  => $wdir{$cd}{dy},
+                            ax  => $cx + $wdir{$cd}{dx} * $minaccess,
+                            ay  => $cy + $wdir{$cd}{dy} * $minaccess,
                           };
       }}}
   # Ok, so we know where the closets go.  Place them on the map:
@@ -129,8 +131,38 @@ sub generate {
                      $cnum, 'doplace', \@map, 'secret');
     showmap(\@map) if $debug > 4;
   }
+
+  # Try to grow the walls around the backs of these closets just a bit...
+  for my $iter (1 .. 1) {
+    for my $x (2 .. ($COLNO - 2)) {
+      for my $y (2 .. ($ROWNO - 2)) {
+        if ($map[$x][$y]{type} eq 'UNDECIDED' and
+            ((int rand countadjacent(\@map, $x, $y, 'WALL')) > int rand(8 - 2 * $iter))) {
+          $map[$x][$y] = +{ type => 'STONE',
+                            char => 'W',
+                            fg   => 'green',
+                            bg   => 'on_black',
+                          };
+        }
+      }
+    }
+  }
+
   $stairx = $closet[$numofclosets - 1]{cx} + ($closet[$numofclosets - 1]{dx} * $minaccess);
   $stairy = $closet[$numofclosets - 1]{cy} + ($closet[$numofclosets - 1]{dy} * $minaccess);
+
+  for my $x (0 .. $COLNO) {
+    $map[$x][0]          = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
+    $map[$x][1]          = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+    $map[$x][$ROWNO]     = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
+    $map[$x][$ROWNO - 1] = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+  }
+  for my $y (1 .. ($ROWNO - 1)) {
+    $map[0][$y]          = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
+    $map[1][$y]          = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+    $map[$COLNO][$y]     = +{ type => 'STONE', char => ' ', bg => 'on_black', fg => 'yellow', };
+    $map[$COLNO - 1][$y] = +{ type => 'WALL',  char => '0', bg => 'on_black', fg => 'yellow', };
+  }
 
   # Maybe place a vault:
   if ($vaultprob >= int rand 100) {
@@ -170,7 +202,7 @@ sub generate {
         }
       }
       $vaultsplaced++;
-      $vaultwhere .= " from ($x, $y) to (".($x+5).",".($y+5).");";
+      #$vaultwhere .= " from ($x, $y) to (".($x+5).",".($y+5).");";
     }
     print "\n" if $debug > 1;
   }
@@ -188,7 +220,7 @@ sub generate {
       # npj
       # ABk
       # fCDm
-      # ghEX <-- X == next A
+      # ghEX
       #  qrs
       while (($map[$x][$y]{type} eq 'UNDECIDED') and                  # A
              ($map[$x][$y + $dy]{type} eq 'UNDECIDED') and            # f
@@ -244,7 +276,7 @@ sub generate {
                                         };
         if (($map[$x + (2 * $dx)][$y - $dy]{type} eq 'UNDECIDED') and       # j
             ($map[$x + (3 * $dx)][$y + $dy]{type} eq 'UNDECIDED') and       # m
-            ($map[$x + (3 * $dx)][$y + (2 * $dy)]{type} eq 'UNDECIDED') and # X == next A
+            ($map[$x + (3 * $dx)][$y + (2 * $dy)]{type} eq 'UNDECIDED') and # X
             ($map[$x + $dx][$y + (3 * $dy)]{type} eq 'UNDECIDED') and       # q
             ($map[$x + (2 * $dx)][$y + (3 * $dy)]{type} eq 'UNDECIDED') and # r
             ($map[$x + (3 * $dx)][$y + (3 * $dy)]{type} eq 'UNDECIDED') and # s
@@ -297,8 +329,13 @@ sub generate {
                                         bg   => 'on_black',
                                       };
         }
-        $x += $dx * 3;
-        $y += $dy * 2;
+        $x += $dx * 3 + int rand 2;   # either at or just east of
+        $y += $dy * (1 + int rand 3); # position m, X, or s.
+        if ($perturbpath > int rand 100) {
+          $dx *= -1;
+        } elsif ($perturbpath > int rand 100) {
+          $dy *= -1;
+        }
       }
     } else {
       my $x = $minbuffer + 1 + int rand ($COLNO - 3 * ($minbuffer + 1));
@@ -328,6 +365,41 @@ sub generate {
     }
   }
 
+  # Try to draw meandering paths between the closets...
+  for my $cnum (1 .. $numofclosets) {
+    my $cone = $cnum % $numofclosets;
+    my $ctwo = ($cnum + 1) % $numofclosets;
+    my $ax = $closet[$cone]{ax};
+    my $ay = $closet[$cone]{ay};
+    my $dx = $closet[$cone]{dx};
+    my $dy = $closet[$cone]{dy};
+    my $tx = $closet[$ctwo]{ax};
+    my $ty = $closet[$ctwo]{ay};
+    my $tries = 0;
+    while ((($ax ne $tx) or ($ay ne $ty)) and ($tries++ < $ROWNO + $COLNO)) {
+      while (($ax + $dx < 1) or ($ay + $dy < 1) or
+             ($ax + $dx >= $COLNO) or ($ay + $dy >= $ROWNO) or
+             ($perturbpath > int rand 100) or
+             not ($map[$ax + $dx][$ay + $dy]{type} =~ /UNDECIDED|ROOM/)) {
+        $dx = ($perturbpath > int rand 100)
+          ? ((50 > int rand 100) ? -1 : 1)
+          : ($tx <=> $ax);
+        $dy = ($perturbpath > int rand 100)
+          ? ((50 > int rand 100) ? 1 : -1)
+          : ($ty <=> $ay);
+      }
+      if ($map[$ax][$ay]{type} =~ /UNDECIDED/) {
+        $map[$ax][$ay] = +{ type => 'ROOM',
+                            char => $floorchar,
+                            bg   => 'on_black',
+                            fg   => 'white',
+                          };
+      }
+      $ax += $dx;
+      $ay += $dy;
+    }
+  }
+
   # We now want to grow the caverns until the various areas connect.
   # While doing so, we want to visit floor positions in a shuffled order.
   my $numofpositions = 0;
@@ -346,7 +418,8 @@ sub generate {
   }
   my $areas = countareas(\@map, qr/ROOM|DOOR/);
   my $tries = 0;
-  while (($areas > 1 + $vaultsplaced) or (count_terrain(\@map, qr/UNDECIDED/) > ($COLNO * $ROWNO / 10))) {
+  while (($areas > 1 + $vaultsplaced) or
+         (count_terrain(\@map, qr/UNDECIDED/) > ($COLNO * $ROWNO * 3 / 4))) {
     if ($tries++ > (4 * $ROWNO * $COLNO)) {
       warn "Spent too long attempting to connect areas.  Restarting...\n" if $debug;
       return generate();
@@ -391,8 +464,8 @@ sub generate {
 
   print "Placing stone blobs.\n" if $debug;
   for (1 .. $stoneblobs) {
-    my $xsize = 5 + int rand int($COLNO / 5);
-    my $ysize = 3 + int rand int($ROWNO / 4);
+    my $xsize = 2 + int rand int($COLNO / 5);
+    my $ysize = 1 + int rand int($ROWNO / 4);
     my $startx = $minbuffer + int rand($COLNO - (2 * $minbuffer) - $xsize);
     my $starty = $minbuffer + int rand($ROWNO - (2 * $minbuffer) - $ysize);
     my $tries;
@@ -491,30 +564,49 @@ sub generate {
       }
     }
   }
-  # Now fix the wall directions...
-  for my $x (0 .. $COLNO) {
-    for my $y (0 .. $ROWNO) {
-      if ($map[$x][$y]{type} eq 'WALL') {
-        my $wdirs = 0;
-        for my $wd (keys %wdir) {
-          my $neighbor = undef;
-          my $nx = $x + $wdir{$wd}{dx};
-          my $ny = $y + $wdir{$wd}{dy};
-          if (($nx >= 0) and ($nx <= $COLNO) and
-              ($ny >= 0) and ($ny <= $ROWNO) and
-              ($map[$nx][$ny]{type} =~ /WALL|DOOR/)) {
-            $wdirs += $wdir{$wd}{bit};
-          }
-        }
-        my $fg = $map[$x][$y]{fg};
-        $map[$x][$y] = +{ type => 'WALL',
-                          char => ($wallglyph[$wdirs] || $map[$x][$y]{c} || '-'),
-                          bg   => 'on_black',
-                          fg   => $fg,
-                        };
+  # ais523 wall direction algorithm.  We start by drawing a square around every
+  # open floor space, then remove the parts of the square that do not connect
+  # to other walls.
+  my %dirbit = ( EAST   => 1,
+                 NORTH  => 2,
+                 WEST   => 4,
+                 SOUTH  => 8,
+               );
+  my @wmap = map { [map { 0 } 0 .. $ROWNO ] } 0 .. $COLNO;
+  for my $x (1 .. ($COLNO - 1)) {
+    for my $y (1 .. ($ROWNO - 1)) {
+      if ($map[$x][$y]{type} eq 'ROOM') {
+        $wmap[$x+1][$y]   |= $dirbit{NORTH} | $dirbit{SOUTH};
+        $wmap[$x-1][$y]   |= $dirbit{NORTH} | $dirbit{SOUTH};
+        $wmap[$x][$y-1]   |= $dirbit{EAST}  | $dirbit{WEST};
+        $wmap[$x][$y+1]   |= $dirbit{EAST}  | $dirbit{WEST};
+        $wmap[$x+1][$y+1] |= $dirbit{NORTH} | $dirbit{WEST};
+        $wmap[$x-1][$y+1] |= $dirbit{NORTH} | $dirbit{EAST};
+        $wmap[$x+1][$y-1] |= $dirbit{SOUTH} | $dirbit{WEST};
+        $wmap[$x-1][$y-1] |= $dirbit{SOUTH} | $dirbit{EAST};
       }
     }
   }
+  for my $x (0 .. $COLNO) {
+    for my $y (0 .. $ROWNO) {
+      if (($x < $COLNO) and not ($map[$x+1][$y]{type} =~ /WALL|DOOR/)) {
+        $wmap[$x][$y] &= ~ $dirbit{EAST};
+      }
+      if (($x > 0) and not ($map[$x-1][$y]{type} =~ /WALL|DOOR/)) {
+        $wmap[$x][$y] &= ~ $dirbit{WEST};
+      }
+      if (($y < $ROWNO) and not ($map[$x][$y+1]{type} =~ /WALL|DOOR/)) {
+        $wmap[$x][$y] &= ~ $dirbit{SOUTH};
+      }
+      if (($y > 0) and not ($map[$x][$y-1]{type} =~ /WALL|DOOR/)) {
+        $wmap[$x][$y] &= ~ $dirbit{NORTH};
+      }
+      if ($map[$x][$y]{type} eq 'WALL') {
+        $map[$x][$y]{char} = $wallglyph[$wmap[$x][$y]];
+      }
+    }
+  }
+
   # Add the stairs.
   $map[$stairx][$stairy] = +{ type => 'STAIR',
                               char => '<',
@@ -787,22 +879,25 @@ sub closet_rectangle {
   if ($doplace) {
     for my $x ($ax .. $bx) {
       for my $y ($ay .. $by) {
-        my $type = ((((abs($x - $cx) == 1) and (abs($y - $cy) <= 1)) or
-                     ((abs($y - $cy) == 1) and (abs($x - $cx) <= 1)) or
-                     ((($x < $cx) or (($x - 1 <= $cx) and ($y != $cy))) and ($dx > 0)) or
-                     ((($y < $cy) or (($y - 1 <= $cy) and ($x != $cx))) and ($dy > 0)) or
-                     ((($x > $cx) or (($x + 1 >= $cx) and ($y != $cy))) and ($dx < 0)) or
-                     ((($y > $cy) or (($y + 1 >= $cy) and ($x != $cx))) and ($dy < 0))) ?
-                    ((($x == $cx + $dx) and ($y == $cy + $dy))
-                     ? 'DOOR' : 'WALL') : 'ROOM');
-        $$map[$x][$y] = +{
-                          type => $type,
-                          char => (($type eq 'DOOR') ? '+' :
-                                   ($type eq 'WALL') ? 'X' : $floorchar),
-                          fg   => (($type eq 'DOOR') ? ($secretdoor ? 'blue' : 'yellow') :
-                                   ($type eq 'WALL') ? 'yellow' : ($debug ? 'red' : 'yellow')),
-                          bg   => 'on_black',#($closetbg[$cnum] || 'on_black'),
-                         };
+        if ((($x > $ax) and ($x < $bx)) or
+            (($y > $ay) and ($y < $by))) {
+          my $type = ((((abs($x - $cx) == 1) and (abs($y - $cy) <= 1)) or
+                       ((abs($y - $cy) == 1) and (abs($x - $cx) <= 1)) or
+                       ((($x < $cx) or (($x - 1 <= $cx) and ($y != $cy))) and ($dx > 0)) or
+                       ((($y < $cy) or (($y - 1 <= $cy) and ($x != $cx))) and ($dy > 0)) or
+                       ((($x > $cx) or (($x + 1 >= $cx) and ($y != $cy))) and ($dx < 0)) or
+                       ((($y > $cy) or (($y + 1 >= $cy) and ($x != $cx))) and ($dy < 0))) ?
+                      ((($x == $cx + $dx) and ($y == $cy + $dy))
+                       ? 'DOOR' : 'WALL') : 'ROOM');
+          $$map[$x][$y] = +{
+                            type => $type,
+                            char => (($type eq 'DOOR') ? '+' :
+                                     ($type eq 'WALL') ? 'X' : $floorchar),
+                            fg   => (($type eq 'DOOR') ? ($secretdoor ? 'blue' : 'yellow') :
+                                     ($type eq 'WALL') ? 'yellow' : ($debug ? 'red' : 'yellow')),
+                            bg   => 'on_black',#($closetbg[$cnum] || 'on_black'),
+                           };
+        }
       }
     }
   } elsif ($debug > 4) {
