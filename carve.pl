@@ -4,10 +4,12 @@ use strict;
 use Term::ANSIColor;
 use Carp;
 
-my ($ROWNO, $COLNO) = (21, 79);
+my %cmdarg = @ARGV;
+
+my ($ROWNO, $COLNO) = (($cmdarg{ROWNO} || 21), ($cmdarg{COLNO} || 79));
 my $roomcount = 0;
 my $domonsters = 0;
-my $pillarprob = 12;
+my $pillarprob = $cmdarg{pillarprob} || 12;
 my (@carvepoint, @room);
 
 # TODO list:
