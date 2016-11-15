@@ -45,9 +45,11 @@ my @wallglyph = ($arg{isolatedwallchar}                     || $arg{wallchar} ||
 my $roomno;
 my $level = +{
               title => "First Room",
-              map   => generate_room($roomno++),
+              map   => ((45 > int rand 100) ? generate_cavern($roomno++, $xmax, $ymax) : generate_room($roomno++)),
              };
+showlevel($level) if $debug =~ /placement/;
 for (1 .. int(($xmax / 10) * ($ymax / 6))) {
+  print "." if $debug =~ /dots/;
   my $room = generate_room($roomno++);
   my $newlev = add_room_to_level($level, $room);
   if ($newlev) {
@@ -59,7 +61,7 @@ for (1 .. int(($xmax / 10) * ($ymax / 6))) {
   }
 }
 
-for my $sdoornum (1 .. 2 + int rand 5) {
+for my $sdoornum (1 .. int(($xmax / 8) + rand($xmax / 14))) {
   my @c = map {
     $$_[0]
   } sort {
@@ -82,9 +84,9 @@ for my $sdoornum (1 .. 2 + int rand 5) {
     } 2 .. ($ymax - 1);
   } 2 .. ($xmax - 1);
   my ($x, $y) = @{$c[0]};
-  $$level{map}[$x][$y] = terrain("SDOOR");
+  $$level{map}[$x][$y] = terrain((60 > rand 100) ? "SDOOR" : "DOOR");
   if ($debug =~ /placement|secret/) {
-    showlevel(+{ title => "Added secret door $sdoornum",
+    showlevel(+{ title => "Added extra door $sdoornum",
                  map   => $$level{map},
                });
   }
@@ -205,6 +207,11 @@ sub getextrema {
       }
     }
   }
+  # Which version of Perl introduced defined-or-equals?  Can I use that soon please?
+  $rxmin = (defined $rxmin) ? $rxmin : int($xmax / 2);
+  $rxmax = (defined $rxmax) ? $rxmax : int($xmax / 2);
+  $rymin = (defined $rymin) ? $rymin : int($ymax / 2);
+  $rymax = (defined $rymax) ? $rymax : int($ymax / 2);
   print "Extrema: $rxmin, $rymin, $rxmax, $rymax\n" if $debug =~ /extrema/;
   return ($rxmin, $rymin, $rxmax, $rymax);
 }
@@ -265,6 +272,7 @@ sub add_room_to_level {
         $$level{map}[$xoffset + $x][$yoffset + $y] = terrain("DOOR");
         # TODO: if there are a lot of possible locations, maybe add a secret door at another one?
       } else {
+        showlevel(+{ title => "(Trying to add this room)", map => $room});
         print color($arg{errorcolor} || "bold red") . "No place for door!" . color("reset");
         showlevel($level);
         print "Press any key.\n";
@@ -302,6 +310,13 @@ sub fixwalls {
   for my $x (1 .. $xmax) {
     for my $y (1 .. $ymax) {
       if ($$map[$x][$y]{type} =~ /DOOR|SDOOR/) {
+        my $floorct = countadjacent($map, $x, $y, qr/FLOOR/);
+        if ($floorct < 1) {
+          # Doors from one corridor to another should _usually_ be converted to secret corridor.
+          if (90 > rand 100) {
+            $$map[$x][$y] = terrain("SCORR");
+          }
+        }
         if (($x > 1) and ($y > 1) and ($x < $xmax) and ($y < $ymax) and
             (# Either it's a vertical door:
              ($$map[$x - 1][$y]{type} =~ /FLOOR|CORR/ and
@@ -324,10 +339,18 @@ sub fixwalls {
               for my $dy (-1 .. 1) {
                 if (($x + $dx > 1) and ($x + $dx < $xmax) and
                     ($y + $dy > 1) and ($y + $dy < $ymax) and
+                    (not $$map[$x][$y]{type} =~ /FLOOR|CORR/) and
                     ((not $dx) or (not $dy) or (50 > rand 100))) {
                   $$map[$x + $dx][$y + $dy] = terrain("FLOOR");
                 }}}
           }
+        }
+      } elsif ($$map[$x][$y]{type} =~ /CORR/) {
+        # While we're at it, clean up any corridors that ended up in rooms:
+        my $floorct = countadjacent($map, $x, $y, qr/FLOOR/);
+        my $corrct  = countadjacent($map, $x, $y, qr/CORR/);
+        if (($floorct > 3) or (($floorct > 1) and not $corrct)) {
+          $$map[$x][$y] = terrain("FLOOR");
         }
       }
     }
@@ -416,12 +439,13 @@ sub generate_room {
   my @arg = @_;
   my @rtype =
     (
-     [ 30 => sub { return organic_room(@_);     } ],
+     [ 30 => sub { return organic_x_room(@_);   } ],
      [ 10 => sub { return dead_corridor(@_);    } ],
      [ 50 => sub { return elipseroom(@_);       } ],
-     [ 40 => sub { return rectangular_room(@_); } ],
+     [ 20 => sub { return rectangular_room(@_); } ],
      [ 15 => sub { return vestibule(@_);        } ],
      [ 30 => sub { return multirect_room(@_);   } ],
+     [ 25 => sub { return cavern_room(@_);      } ],
     );
   my $psum = 0;
   $psum += $$_[0] for @rtype;
@@ -434,6 +458,98 @@ sub generate_room {
     }
   }
   die "Failed to select a room type (wanted $type from $psum, only got to $sum)";
+}
+
+sub cavern_room {
+  my ($roomno) = @_;
+  my $sizex = int($xmax / (2 + int rand 4));
+  my $sizey = int($ymax / (2 + int rand 2));
+  return generate_cavern($roomno, $sizex, $sizey);
+}
+
+sub generate_cavern {
+  my ($roomno, $sizex, $sizey) = @_;
+  # Initialize map to 55% floor, 45% wall, at random:
+  my $map = [map {
+    my $x = $_;
+    [map {
+      my $y = $_;
+      terrain((($x == 1) or ($x >= $sizex) or
+               ($y == 1) or ($y >= $sizey)) ? "UNDECIDED":
+              (55 > rand 100) ? "FLOOR" : "WALL");
+    } 0 .. $ymax]
+  } 0 .. $xmax];
+  # Apply usually 5 (sometimes 4 or 6, occasionally 3 or 7), rounds of smoothing:
+  for my $pass (1 .. ((55 > int rand 100) ? 5 : (75 > int rand 100) ? (4 + int rand 3) : (3 + int rand 5))) {
+    if ($debug =~ /cavern|smooth/) {
+      showlevel(+{ title => "Cavern (About to be Smoothed, Pass $pass)", map => $map });
+    }
+    for my $y (randomorder(2 .. ($sizey - 1))) {
+      for my $x (randomorder(2 .. ($sizex - 1))) {
+        if ($$map[$x][$y]{type} eq "FLOOR") {
+          if (countadjacent($map, $x, $y, qr/FLOOR/) < 4) {
+            $$map[$x][$y] = terrain("WALL");
+          }
+        } elsif ($$map[$x][$y]{type} eq "WALL") {
+          if (countadjacent($map, $x, $y, qr/FLOOR/) >= 6) {
+            $$map[$x][$y] = terrain("FLOOR");
+          }
+        }
+      }
+    }
+  }
+  if ($debug =~ /cavern/) {
+    showlevel(+{ title => "Cavern (Preselection)", map => $map });
+  }
+  my $mask = blankmap();
+  my @candidate = ();
+  for my $x (randomorder(2 .. $sizex)) {
+    for my $y (randomorder(2 .. $sizey)) {
+      if (($$map[$x][$y]{type} =~ /FLOOR/) and
+          ($$mask[$x][$y]{type} eq "UNDECIDED")) {
+        push @candidate, [$x, $y, cavern_paint_mask($map, $mask, $x, $y)];
+      }
+    }
+  }
+  @candidate = sort { $$b[2] <=> $$a[2] } @candidate;
+  if (not @candidate) {
+    warn "No candidates for cavern.  Punting...\n" if $debug;
+    return generate_room($roomno);
+  }
+  if ($debug =~ /cavern/) {
+    print "Cavern candidate(s):\n"
+      . (join "", map { sprintf("  (%02d,%02d):  %3d\n", @$_) } @candidate);
+  }
+  my $cavern = blankmap();
+  my ($x, $y, $size) = @{$candidate[0]};
+  print "Selected cavern has $size floor tiles.\n" if $debug =~ /cavern/;
+  cavern_paint_mask($map, $cavern, $x, $y);
+  $cavern = walls_around_room($cavern);
+  showlevel(+{ title => "Cavern (Finalized)", map => $cavern }) if $debug =~ /cavern/;
+  return $cavern;
+}
+
+sub cavern_paint_mask {
+  my ($map, $mask, $x, $y) = @_;
+  my $count = 0;
+  if (($$map[$x][$y]{type} =~ /FLOOR/) and
+      ($$mask[$x][$y]{type} eq "UNDECIDED")) {
+    $$mask[$x][$y] = terrain("FLOOR");
+    $count++;
+    if ($x > 2) {
+      $count += cavern_paint_mask($map, $mask, $x - 1, $y);
+    }
+    if ($x + 1 < $xmax) {
+      $count += cavern_paint_mask($map, $mask, $x + 1, $y);
+    }
+    if ($y > 2) {
+      $count += cavern_paint_mask($map, $mask, $x, $y - 1);
+    }
+    if ($y + 1 < $ymax) {
+      $count += cavern_paint_mask($map, $mask, $x, $y + 1);
+    }
+  }
+  return $count;
 }
 
 sub multirect_room {
@@ -464,7 +580,24 @@ sub multirect_room {
       }
     }
   }
+  if (60 > int rand 100) {
+    $map = smoothe_map($map);
+  }
   return walls_around_room($map);
+}
+
+sub smoothe_map {
+  my ($map) = @_;
+  for my $x (randomorder(1 .. $xmax)) {
+    for my $y (randomorder(1 .. $ymax)) {
+      if ($$map[$x][$y]{type} =~ /UNDECIDED/) {
+        if (countadjacent($map, $x, $y, qr/FLOOR/) >= 3 + int rand 3) {
+          $$map[$x][$y] = terrain("FLOOR");
+        }
+      }
+    }
+  }
+  return $map;
 }
 
 sub mr_subrange {
@@ -518,7 +651,8 @@ sub vestibule {
   }
   $$map[$cx][$cy] = terrain("CORR");
   my ($dx, $dy) = randomorder(0, (50 > int rand 100) ? 1 : -1);
-  $$map[$dx + $dx][$cy + $dy] = terrain("DOOR");
+  $$map[$cx + $dx][$cy + $dy] = terrain((35 > rand 100) ? "SDOOR" : "DOOR");
+  showlevel(+{ title => "vestibule", map => $map }) if $debug =~ /vestibule/;
   return $map;
 }
 
@@ -570,7 +704,7 @@ sub rectangular_room {
   return walls_around_room($map);
 }
 
-sub organic_room {
+sub organic_x_room {
   my ($roomno) = @_;
   my $map = blankmap();
   # Pick xsize and ysize for the room, NOT counting walls.
@@ -617,6 +751,9 @@ sub organic_room {
         for (1 .. $dx) { $iter->(); $x += $xdir; }
       }
     }
+  }
+  if (65 > int rand 100) {
+    $map = smoothe_map($map);
   }
   return walls_around_room($map);
 }
