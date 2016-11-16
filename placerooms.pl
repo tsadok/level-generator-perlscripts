@@ -6,8 +6,11 @@
 
 use utf8;
 use Term::ANSIColor;
+use Carp;
 use open ':encoding(UTF-8)';
 use open ":std";
+
+$|=1;
 
 my %arg = @ARGV;
 
@@ -16,6 +19,12 @@ my $xmax      = $arg{xmax} || $arg{COLNO} || 79;
 my $ymax      = $arg{ymax} || $arg{ROWNO} || 20;
 my $unicode   = $arg{unicode} ? "yes" : $arg{ascii} ? undef : "yes";
 my $headcolor = $arg{headcolor} || "bold cyan";
+
+# Precalculate some ranges, as a minor optimization:
+my @rndx      = randomorder(1 .. $xmax);
+my @rndy      = randomorder(1 .. $ymax);
+my @rndxpos   = randomorder((-1 * $xmax) .. $xmax);
+my @rndypos   = randomorder((-1 * $ymax) .. $ymax);
 
 my %wdir = ( E => +{ bit => 1, dx =>  1, dy =>  0, clockwise => 'S', },
              N => +{ bit => 2, dx =>  0, dy => -1, clockwise => 'E', },
@@ -42,14 +51,15 @@ my @wallglyph = ($arg{isolatedwallchar}                     || $arg{wallchar} ||
                  $arg{crosswallchar}                        || $arg{wallchar} || ($unicode ? "┼" : "-"), # 15 = 1 + 2 + 4 + 8 => connects all four directions.
                 );
 
-my $roomno;
+my $roomno = 1;
 my $level = +{
               title => "First Room",
-              map   => ((45 > int rand 100) ? generate_cavern($roomno++, $xmax, $ymax) : generate_room($roomno++)),
+              map   => ((45 > int rand 100) ? generate_cavern($roomno, $xmax, $ymax) :
+                        (85 > int rand 100) ? barbell_room($roomno) : generate_room($roomno)),
              };
 showlevel($level) if $debug =~ /placement/;
 for (1 .. int(($xmax / 10) * ($ymax / 6))) {
-  print "." if $debug =~ /dots/;
+  print ":" if $debug =~ /dots/;
   my $room = generate_room($roomno++);
   my $newlev = add_room_to_level($level, $room);
   if ($newlev) {
@@ -155,10 +165,14 @@ sub distance_around_wall {
 }
 
 sub can_place_room {
-  my ($level, $room, $xoffset, $yoffset) = @_;
+  my ($level, $room, $xoffset, $yoffset, $rxmin, $rymin, $rxmax, $rymax) = @_;
+  if (($rxmin + $xoffset < 1) or ($rxmax + $xoffset > $xmax) or
+      ($rymin + $yoffset < 1) or ($rymax + $yoffset > $ymax)) {
+    return 0;
+  }
   my @wallmatch;
-  for my $y (randomorder(1 .. $ymax)) {
-    for my $x (randomorder(1 .. $xmax)) {
+  for my $y ($rymin .. $rymax) {
+    for my $x ($rxmin .. $rxmax) {
       if ($$room[$x][$y]{type} ne "UNDECIDED") {
         if (($xoffset + $x < 1) or ($xoffset + $x > $xmax) or
             ($yoffset + $y < 1) or ($yoffset + $y > $ymax)) {
@@ -188,30 +202,25 @@ sub can_place_room {
 
 sub getextrema {
   my ($room) = @_;
-  my ($rxmin, $rymin, $rxmax, $rymax) = (undef, undef, undef, undef);
+  my ($rxmin, $rymin, $rxmax, $rymax) = ($xmax, $ymax, 0, 0);
   for my $x (1 .. $xmax) {
     for my $y (1 .. $ymax) {
       if ($$room[$x][$y]{type} ne "UNDECIDED") {
-        if ((not defined $rxmin) or ($x < $rxmin)) {
+        if ($x < $rxmin) {
           $rxmin = $x;
         }
-        if ((not defined $rxmax) or ($x > $rxmax)) {
+        if ($x > $rxmax) {
           $rxmax = $x;
         }
-        if ((not defined $rymin) or ($y < $rymin)) {
+        if ($y < $rymin) {
           $rymin = $y;
         }
-        if ((not defined $rymax) or ($y > $rymax)) {
+        if ($y > $rymax) {
           $rymax = $y;
         }
       }
     }
   }
-  # Which version of Perl introduced defined-or-equals?  Can I use that soon please?
-  $rxmin = (defined $rxmin) ? $rxmin : int($xmax / 2);
-  $rxmax = (defined $rxmax) ? $rxmax : int($xmax / 2);
-  $rymin = (defined $rymin) ? $rymin : int($ymax / 2);
-  $rymax = (defined $rymax) ? $rymax : int($ymax / 2);
   print "Extrema: $rxmin, $rymin, $rxmax, $rymax\n" if $debug =~ /extrema/;
   return ($rxmin, $rymin, $rxmax, $rymax);
 }
@@ -220,11 +229,11 @@ sub add_room_to_level {
   my ($level, $room) = @_;
   my ($possible, $bestx, $besty, $bestcount) = (0, 0, 0, 0);
   my ($rxmin, $rymin, $rxmax, $rymax) = getextrema($room);
-  for my $xoffset (randomorder((-1 * $xmax) .. $xmax)) {
+  for my $xoffset (@rndxpos) {
     if (($xoffset + $rxmin < 0) or ($xoffset + $rxmax > $xmax)) {
       # Cannot place at this x position (column), no need to test the details.
     } else {
-      for my $yoffset (randomorder((-1 * $ymax) .. $ymax)) {
+      for my $yoffset (@rndypos) {
         if (($yoffset + $rymin < 0) or ($yoffset + $rymax > $ymax)) {
           # Cannot place at this (x,y) position, no need to test further details.
         } else {
@@ -437,6 +446,9 @@ sub walls_around_room {
 
 sub generate_room {
   my @arg = @_;
+  carp("generate_room(@arg)") if ($debug =~ /carp/);
+  print "." if $debug =~ /dots/;
+  select undef, undef, undef, $arg{sleep} if $arg{sleep};
   my @rtype =
     (
      [ 30 => sub { return organic_x_room(@_);   } ],
@@ -447,6 +459,8 @@ sub generate_room {
      [ 30 => sub { return multirect_room(@_);   } ],
      [ 25 => sub { return cavern_room(@_);      } ],
     );
+  # This kind only ever fits if done pretty early on:
+  push @rtype, [ ((5 - $roomno) * 5) => sub { return barbell_room(@_); } ] if $roomno < 5;
   my $psum = 0;
   $psum += $$_[0] for @rtype;
   my $type = rand $psum;
@@ -460,10 +474,153 @@ sub generate_room {
   die "Failed to select a room type (wanted $type from $psum, only got to $sum)";
 }
 
+sub barbell_room {
+  my ($roomno) = @_;
+  my ($one, $two, @oneextreme, @twoextreme,
+      $oxmin, $oymin, $oxmax, $oymax,
+      $txmin, $tymin, $txmax, $tymax);
+  my ($xsizesum, $ysizesum) = ($xmax, $ymax); # Guarantee a "re"roll the first time.
+  while (($xsizesum > ($xmax / 3)) and ($ysizesum > ($ymax / 2))) {
+    $one = generate_room();
+    $two = generate_room();
+    ($oxmin, $oymin, $oxmax, $oymax) = getextrema($one);
+    ($txmin, $tymin, $txmax, $tymax) = getextrema($two);
+    $xsizesum = ($oxmax - $oxmin) + ($txmax - $txmin);
+    $ysizesum = ($oymax - $oymin) + ($tymax - $tymin);
+  }
+  # But which way do we want to align the thing, vertically or horizontally?
+  my $dovert = 0;
+  my $horzweight = $xsizesum * 3000 / $xmax;
+  my $vertweight = $ysizesum * 1500 / $ymax;
+  if ($horzweight > ($vertweight * 3 / 2)) {
+    # Horizontal "costs" more than half again as much as vertical,
+    # so let's do vertical:
+    $dovert = 1;
+  } elsif ($vertweight > ($horzweight * 3 / 2)) {
+    $dovert = 0;
+  } elsif (rand($horzweight) > rand($vertweight)) {
+    $dovert = 1;
+  }
+
+  my $map = blankmap();
+  if ($dovert) {
+    # Room one goes to the north:
+    my $offsetone = 1 - $oymin;
+    for my $x ($oxmin .. $oxmax) {
+      for my $y ($oymin .. $oymax) {
+        $$map[$x][$y + $offsetone] = $$one[$x][$y];
+      }
+    }
+    # How long can the corridor be?
+    my $maxlen = $ymax - 2 - ($tymax - $tymin) - ($oymax - $oymin);
+    # We need a length of at least three, to put doors at both ends.
+    if ($maxlen < 3) {
+      warn "Vertical barbell max corridor length too small ($maxlen = $ymax - 2 - ($tymax - $tymin) - ($oymax - $oymin))";
+      return $one;
+    }
+    my $corrlen = 3 + int rand($maxlen - 2);
+    # But before we draw in the corridor, room two goes to the south:
+    my $offsettwo = $oymax + $offsetone + $corrlen - $tymin;
+    for my $x ($txmin .. $txmax) {
+      for my $y ($tymin .. $tymax) {
+        $$map[$x][$y + $offsettwo] = $$two[$x][$y];
+      }
+    }
+    my @spos = grep { $$one[$_][$oymax - 1]{type} =~ /CORR|FLOOR/ } $oxmin .. $oxmax;
+    my @epos = grep { $$two[$_][$tymin + 1]{type} =~ /CORR|FLOOR/ } $txmin .. $txmax;
+    if (not @spos) {
+      warn "Vertical barbell failed to find corridor start position.\n";
+      if ($debug =~ /barbell/) {
+        showlevel(+{ title => "rooms", map => $map });
+        print "Press Enter.\n";
+        <STDIN>;
+      }}
+    if (not @epos) {
+      warn "Vertical barbell failed to find corridor end position.\n";
+      if ($debug =~ /barbell/) {
+        showlevel(+{ title => "rooms", map => $map });
+        print "Press Enter.\n";
+        <STDIN>;
+      }}
+    if ((scalar @spos) and (scalar @epos)) {
+      my $startx = $spos[rand @spos];
+      my $endx   = $epos[rand @epos];
+      $$map[$startx][$oymax + $offsetone] = terrain("DOOR");
+      $$map[$endx][$tymin + $offsettwo] = terrain("DOOR");
+      drawcorridor($map, $startx, $oymax + $offsetone + 1, $endx, $tymin + $offsettwo - 1);
+    }
+  } else {
+    # Do east-to-west barbell.
+    # Room one goes to the west:
+    my $offsetone = 1 - $oxmin;
+    for my $x ($oxmin .. $oxmax) {
+      for my $y ($oymin .. $oymax) {
+        $$map[$x + $offsetone][$y] = $$one[$x][$y];
+      }
+    }
+    # How long can the corridor be?
+    my $maxlen = $xmax - 2 - ($txmax - $txmin) - ($oxmax - $oxmin);
+    # We need a length of at least three, to put doors at both ends.
+    if ($maxlen < 3) {
+      warn "Horizontal barbell max corridor length too small ($maxlen = $xmax - 2 - ($txmax - $txmin) - ($oxmax - $oxmin))";
+      return $two;
+    }
+    my $corrlen = 3 + int rand($maxlen - 2);
+    # But before we draw in the corridor, room two goes to the east:
+    my $offsettwo = $oxmax + $offsetone + $corrlen - $txmin;
+    for my $x ($txmin .. $txmax) {
+      for my $y ($tymin .. $tymax) {
+        $$map[$x + $offsettwo][$y] = $$two[$x][$y];
+      }
+    }
+    my @spos = grep { $$one[$oxmax - 1][$_]{type} =~ /CORR|FLOOR/ } $oymin .. $oymax;
+    my @epos = grep { $$two[$txmin + 1][$_]{type} =~ /CORR|FLOOR/ } $tymin .. $tymax;
+    if (not @spos) {
+      warn "Horizontal barbell failed to find corridor start position.\n";
+      if ($debug =~ /barbell/) {
+        showlevel(+{ title => "rooms", map => $map });
+        print "Press Enter.\n";
+        <STDIN>;
+      }}
+    if (not @epos) {
+      warn "Horizontal barbell failed to find corridor end position.\n";
+      if ($debug =~ /barbell/) {
+        showlevel(+{ title => "rooms", map => $map });
+        print "Press Enter.\n";
+        <STDIN>;
+      }}
+    if ((scalar @spos) and (scalar @epos)) {
+      my $starty = $spos[rand @spos];
+      my $endy   = $epos[rand @epos];
+      $$map[$oxmax + $offsetone][$starty] = terrain("DOOR");
+      $$map[$txmin + $offsettwo][$endy] = terrain("DOOR");
+      drawcorridor($map, $oxmax + $offsetone + 1, $starty, $txmin + $offsettwo - 1, $endy);
+    }
+  }
+  return $map;
+}
+
+sub drawcorridor {
+  my ($map, $ox, $oy, $tx, $ty, $terrain) = @_;
+  my $xdir = ($tx <=> $ox);
+  my $ydir = ($ty <=> $oy);
+  $$map[$ox][$oy] = terrain($terrain || "CORR");
+  my $dx = abs($tx - $ox);
+  my $dy = abs($ty - $oy);
+  if ($dx or $dy) {
+    my $pick = rand($dx + $dy);
+    if ($pick > $dx) {
+      drawcorridor($map, $ox, $oy + $ydir, $tx, $ty, $terrain);
+    } else {
+      drawcorridor($map, $ox + $xdir, $oy, $tx, $ty, $terrain);
+    }
+  }
+}
+
 sub cavern_room {
   my ($roomno) = @_;
-  my $sizex = int($xmax / (2 + int rand 4));
-  my $sizey = int($ymax / (2 + int rand 2));
+  my $sizex = int($xmax / (2 + int rand 3));
+  my $sizey = int($ymax * 2 / (3 + int rand 3));
   return generate_cavern($roomno, $sizex, $sizey);
 }
 
@@ -513,7 +670,11 @@ sub generate_cavern {
   }
   @candidate = sort { $$b[2] <=> $$a[2] } @candidate;
   if (not @candidate) {
-    warn "No candidates for cavern.  Punting...\n" if $debug;
+    warn "No candidates for cavern ($sizex, $sizey).  Punting...\n" if $debug;
+    if ($debug =~ /cavern/) {
+      print "Press Enter...\n";
+      <STDIN>;
+    }
     return generate_room($roomno);
   }
   if ($debug =~ /cavern/) {
@@ -532,6 +693,7 @@ sub generate_cavern {
 sub cavern_paint_mask {
   my ($map, $mask, $x, $y) = @_;
   my $count = 0;
+  no warnings 'recursion';
   if (($$map[$x][$y]{type} =~ /FLOOR/) and
       ($$mask[$x][$y]{type} eq "UNDECIDED")) {
     $$mask[$x][$y] = terrain("FLOOR");
@@ -554,8 +716,8 @@ sub cavern_paint_mask {
 
 sub multirect_room {
   my ($roomno) = @_;
-  my $sizex = int(($xmax / 10) + rand($xmax / 4));
-  my $sizey = int(($ymax / 5) + rand($ymax / 3));
+  my $sizex = int(($xmax / 10) + rand rand($xmax / 3));
+  my $sizey = int(($ymax / 5) + rand rand($ymax / 2));
   my $xoffset = int(($xmax - $sizex) / 2);
   my $yoffset = int(($ymax - $sizey) / 2);
   my $map = blankmap();
@@ -588,8 +750,8 @@ sub multirect_room {
 
 sub smoothe_map {
   my ($map) = @_;
-  for my $x (randomorder(1 .. $xmax)) {
-    for my $y (randomorder(1 .. $ymax)) {
+  for my $x (@rndx) {
+    for my $y (@rndy) {
       if ($$map[$x][$y]{type} =~ /UNDECIDED/) {
         if (countadjacent($map, $x, $y, qr/FLOOR/) >= 3 + int rand 3) {
           $$map[$x][$y] = terrain("FLOOR");
@@ -692,8 +854,8 @@ sub dead_corridor {
 sub rectangular_room {
   my ($roomno) = @_;
   my $map = blankmap();
-  my $xsize = 2 + int rand rand($xmax * 3 / 4 - 4);
-  my $ysize = 2 + int rand rand($ymax * 3 / 4 - 4);
+  my $xsize = 2 + int rand rand($xmax * 2 / 3 - 4);
+  my $ysize = 2 + int rand rand($ymax * 2 / 3 - 4);
   my $xoffset = int(($xmax - $xsize) / 2);
   my $yoffset = int(($ymax - $ysize) / 2);
   for my $x ($xoffset .. ($xoffset + $xsize)) {
@@ -866,7 +1028,7 @@ sub terrain {
     use Carp;
     use Data::Dumper; print Dumper(\%ttyp);
     print color($arg{errorbg} || "on_black") . color($arg{errorfg} || "red") . "Unknown terrain type: '$type'" . color("reset") . "\n";
-    carp "Press any key.\n";
+    carp "Press Enter...\n";
     <STDIN>;
   }
 }
