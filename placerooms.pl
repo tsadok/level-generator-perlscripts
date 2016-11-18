@@ -73,6 +73,13 @@ for (1 .. int(($xmax / 10) * ($ymax / 6))) {
   }
 }
 
+if ((75 > rand 100) or ($debug =~ /fixcorr/)) {
+  $$level{map} = fix_dead_corridors($$level{map});
+  if ($debug =~ /corr/) {
+    showlevel(+{title => "Fixed Dead Corridors", map => $$level{map}});
+  }
+}
+
 for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 20)) {
   if ((15 > int rand 100) or ($debug =~ /unconditional/)) {
     # Do a small but completely unconditional lake; we rely on the
@@ -424,6 +431,72 @@ sub convert_terrain {
   return $map;
 }
 
+sub extend_dead_corridor {
+  my ($map, $cx, $cy, $maxiter) = @_;
+  return if $maxiter < 1;
+  for my $vector ([0, -1], [0, 1], [1, 0], [-1, 0]) {
+    my ($dx, $dy) = @$vector;
+    if (($cx + $dx >= 1) and ($cx + $dx <= $xmax) and
+        ($cy + $dy >= 1) and ($cy + $dy <= $ymax) and
+        ($$map[$cx + $dx][$cy + $dy]{type} =~ /CORR/)) {
+      # This is the direction we're coming _from_.
+      # We want to extend in the opposite direction:
+      my $tx = $cx - $dx;
+      my $ty = $cy - $dy;
+      # But can we?
+      my $ttype = $$map[$tx][$ty]{type};
+      if ($walkable{$ttype}) {
+        return "Success"; # Base case for success.
+      } elsif (($ttype eq "UNDECIDED") or ($solid{$ttype})) {
+        # Provisionally continue:
+        my $orig = $$map[$tx][$ty];
+        $$map[$tx][$ty] = terrain("CORR");
+        my $result = extend_dead_corridor($map, $tx, $ty, $maxiter - 1);
+        if (($result eq "Success") and ($ttype eq "WALL")) {
+          # Special case, the very last spot we opened up can become a
+          # door, if it was formerly a wall.  (If this is wrong,
+          # fix_walls will correct it later.)
+          $$map[$tx][$ty] = terrain("DOOR");
+          return "Yes, but already did the door.";
+        } elsif ($result) {
+          return $result; # propagate our success back up the call chain.
+        } else {
+          # Failed, backtrack:
+          $$map[$tx][$ty] = $orig;
+          return; # propagate failure back up the call chain.
+        }
+      }
+    }
+  }
+  # If we didn't find a direction to extend, we fail:
+  return;
+  # This will happen for example if we hit the edge of the level, or
+  # run into terrain that is neither solid nor walkable (e.g., lava).
+  # If we've provisionally extended the corridor several tiles
+  # already, we'll backtrack and rip it all out.
+}
+
+sub fix_dead_corridors {
+  my ($map, $maxiter, $extendprob) = @_;
+  my $matchre = qr/FLOOR|CORR|SHALLOW|LAKE|DOOR/;
+  $maxiter    ||= 300;
+  $extendprob ||= 25 + int rand 50;
+  my $didanything = 1;
+  while ($didanything and ($maxiter-- > 0)) {
+    $didanything = 0;
+    for my $x (2 .. ($xmax - 1)) {
+      for my $y (2 .. ($ymax - 1)) {
+        if (($$map[$x][$y]{type} =~ /CORR/) and
+            (countadjacent($map, $x, $y, $matchre) == 1)) {
+          $didanything++;
+          if (($extendprob > rand 100) and
+              extend_dead_corridor($map, $x, $y, int(($xmax + $ymax) / 2))) {
+          } elsif (countadjacent($map, $x, $y, qr/CORR/) == 1) {
+            $$map[$x][$y] = terrain("STONE");
+          }}}}}
+  return $map;
+}
+
 sub fixwalls {
   my ($map, %arg) = @_;
   # First, check for doors that aren't accessible enough:
@@ -596,7 +669,7 @@ sub generate_room {
   if (defined $rno) {
     # These kinds should never be used for lakes, only for actual rooms:
     push @rtype, [ 15 => sub { return vestibule(@_);        } ];
-    push @rtype, [ 10 => sub { return dead_corridor(@_);    } ];
+    push @rtype, [ 25 => sub { return dead_corridor(@_);    } ];
     push @rtype, [ 20 => sub { return rectangular_room(@_); } ];
     # This kind only ever fits if done pretty early on:
     push @rtype, [ ((5 - $rno) * 5) => sub { return barbell_room(@_); } ] if $rno < 5;
@@ -1169,8 +1242,8 @@ sub rectangular_room {
 
 sub quadrilateral_room {
   my ($roomno, $rxmax, $rymax, @punt) = @_;
-  $rxmax ||= $xmax - 1;
-  $rymax ||= $ymax;
+  $rxmax ||= int ($xmax / 3);
+  $rymax ||= int ($ymax / 2);
   # We pick one point in each quadrant; this ensures correct point
   # ordering but allows quite weird (including non-convex) shapes.
   # The point/quadrant mapping: a is nw, b is ne, c is se, d is sw.
@@ -1188,6 +1261,8 @@ sub quadrilateral_room {
   drawcorridor($slate, $bx, $by, $cx, $cy, "STONE");
   drawcorridor($slate, $cx, $cy, $dx, $dy, "STONE");
   drawcorridor($slate, $dx, $dy, $ax, $ay, "STONE");
+  $slate = convert_terrain($slate, qr/UNDECIDED/, terrain("FLOOR"));
+  showlevel(+{ title => "Preliminary Quadrilateral", map => $slate }) if $debug =~ /quadrilateral/;
   # As with triangles (see comment there), find a point inside:
   my $infinity = ($xmax * $ymax) + 1;
   my $dist = [ map { my $x = $_; [map { $infinity } 0 .. $ymax] } 0 .. $xmax];
