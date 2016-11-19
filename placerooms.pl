@@ -4,6 +4,7 @@
 # Inspired by this article:
 # https://www.rockpapershotgun.com/2015/07/28/how-do-roguelikes-generate-levels/
 
+use strict;
 use utf8;
 use Term::ANSIColor;
 use Carp;
@@ -54,13 +55,14 @@ my %walkable = map { $_ => "true" } qw(FLOOR CORR SCORR DOOR SDOOR SHALLOW);
 my %solid    = map { $_ => "true" } qw(STONE WALL);
 
 my $roomno = 1;
+my $roomcountgoal = int(($xmax / 10) * ($ymax / 6));
 my $level = +{
               title => "First Room",
               map   => ((45 > int rand 100) ? generate_cavern($roomno, $xmax, $ymax) :
                         (85 > int rand 100) ? barbell_room($roomno) : generate_room($roomno)),
              };
 showlevel($level) if $debug =~ /placement/;
-for (1 .. int(($xmax / 10) * ($ymax / 6))) {
+for (1 .. $roomcountgoal) {
   print ":" if $debug =~ /dots/;
   my $room = generate_room($roomno++);
   my $newlev = add_room_to_level($level, $room);
@@ -69,11 +71,13 @@ for (1 .. int(($xmax / 10) * ($ymax / 6))) {
     $$level{title} = "Level After " . $roomno . " Rooms";
     showlevel($level) if $debug =~ /placement/;
   } elsif ($debug =~ /placement/) {
+    showlevel(+{ title => "Unplaced Room", map => $room })
+      if $debug =~ /unplaced/;
     print "Could not place room $roomno.\n";
   }
 }
 
-if ((75 > rand 100) or ($debug =~ /fixcorr/)) {
+if ((90 > rand 100) or ($debug =~ /fixcorr/)) {
   $$level{map} = fix_dead_corridors($$level{map});
   if ($debug =~ /corr/) {
     showlevel(+{title => "Fixed Dead Corridors", map => $$level{map}});
@@ -89,8 +93,9 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
     # for unconditional lakes, because the entire lake is drawn,
     # including the parts that pass through former walls and stone.
     print "Unconditional lake.\n" if $debug =~ /lake/;
-    my $lake = generate_lake(2 + int rand($xmax / 10),
-                             1 + int rand($ymax / 5));
+    my ($lake, $deep, $shallow)
+      = generate_lake(2 + int rand($xmax / 10),
+                      1 + int rand($ymax / 5));
     my ($lxmin, $lymin, $lxmax, $lymax) = getextrema($lake);
     my $lxsize = $lxmax - $lxmin + 1;
     my $lysize = $lymax - $lymin + 1;
@@ -108,9 +113,10 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
     # that doesn't block the player from traversing the level.
     my $lxmax = 3 + int($xmax * 3 / 4);
     my $lymax = 2 + int($ymax * 2 / 3);
+    my ($lxsize, $lysize) = ($lxmax, $lymax);
     my $done = 0;
-    while ((not $done) and ($lxmax > 2) and ($lymax > 1)) {
-      my $lake = generate_lake($lxmax, $lymax);
+    while ((not $done) and ($lxmax > 3) and ($lymax > 2)) {
+      my ($lake, $deep, $shallow) = generate_lake($lxmax, $lymax);
       my ($lxa, $lya, $lxb, $lyb) = getextrema($lake);
       if ($debug =~ /lake/) {
         showlevel(+{ title => "Conditional Lake (Unplaced)", map => $lake});
@@ -118,17 +124,11 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
       }
       my $tries = 20;
       while ((not $done) and ($tries-- > 0)) {
-        my $lxsize = $lxb - $lxa + 1;
-        my $lysize = $lyb - $lya + 1;
+        $lxsize = $lxb - $lxa + 1;
+        $lysize = $lyb - $lya + 1;
         my $lxpos  = 2 + int rand($xmax - $lxsize - 4);
         my $lypos  = 1 + int rand($ymax - $lysize - 2);
-        my $combined = [map {
-          my $x = $_;
-          [ map {
-            my $y = $_;
-            +{ %{$$level{map}[$x][$y]} }
-          } 0 .. $ymax]
-        } 0 .. $xmax];
+        my $combined = copy_map($$level{map});
         my @edgespot;
         for my $x (0 .. ($lxsize - 1)) {
           for my $y (0 .. ($lysize - 1)) {
@@ -138,7 +138,7 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
                        ($$combined[$lxpos + $x][$lypos + $y]{type} eq "DOOR") or
                        ($$combined[$lxpos + $x][$lypos + $y]{type} eq "SDOOR"))) {
                 $$combined[$lxpos + $x][$lypos + $y] = $$lake[$lxa + $x][$lya + $y];
-                push @edgespot, [$x, $y] if $$lake[$lxa + $x][$lya + $y] =~ /SHALLOW/;
+                push @edgespot, [$x, $y] if $walkable{$$lake[$lxa + $x][$lya + $y]{type}};
               }}}}
         if ($debug =~ /lake/) {
           print "Lake Size ($lxsize,$lysize); Position ($lxpos,$lypos).\n";
@@ -165,8 +165,8 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
         }
       }
       # If we reach this point, give up on that lake and try a smaller one:
-      $lxmax = (7 * $lxmax + 1) / 10;
-      $lymax = (7 * $lymax + 1) / 10;
+      $lxmax = (7 * $lxsize + 1) / 10;
+      $lymax = (7 * $lysize + 1) / 10;
     }
   }
   if ($debug =~ /lake|placement/) {
@@ -217,6 +217,78 @@ showlevel($level);
 
 exit 0; # Subroutines Follow.
 
+sub is_well_connected {
+  my ($map) = @_;
+  my ($x, $y) = (1,1);
+  my $count = 0; # Counts number of walkable tiles.
+  while (($y <= $ymax) and not $walkable{$$map[$x][$y]{type}}) {
+    $x++; if ($x > $xmax) { $x = 1; $y++; }
+  }
+  if ($y > $ymax) {
+    print "is_well_connected() found no walkable terrain.\n" if $debug =~ /connected/;
+    return;
+  }
+  my $dist = distance_map($map, $x, $y);
+  while ($y <= $ymax) {
+    if ($walkable{$$map[$x][$y]{type}}) {
+      $count++;
+      return if $$dist[$x][$y] > ($xmax * $ymax);
+    }
+    $x++; if ($x > $xmax) { $x = 1; $y++; }
+  }
+  return $count;
+}
+
+sub distance_map {
+  my ($map, $ox, $oy) = @_;
+  my $infinity = ($xmax * $ymax) + 1;
+  my $dist = [ map { my $x = $_; [map { $infinity } 0 .. $ymax] } 0 .. $xmax];
+  $$dist[$ox][$oy] = 0;
+    my @nextgen = ([$ox, $oy]);
+  while (scalar @nextgen) {
+    my @lastgen = @nextgen;
+    @nextgen = ();
+    for my $coord (@lastgen) {
+      my ($x, $y) = @$coord;
+      my $newdist = $$dist[$x][$y] + 1;
+      for my $vector ([0, -1], [0, 1], [-1, 0], [1, 0]) {
+        my ($dx, $dy) = @$vector;
+        if (($x + $dx >= 1) and ($x + $dx <= $xmax) and
+            ($y + $dy >= 1) and ($y + $dy <= $ymax) and
+            ($walkable{$$map[$x + $dx][$y + $dy]{type}}) and
+            $$dist[$x + $dx][$y + $dy] > $newdist) {
+          $$dist[$x + $dx][$y + $dy] = $newdist;
+          push @nextgen, [$x + $dx, $y + $dy];
+        }}}}
+  if ($debug =~ /distmap/) {
+    my %bg = ( 0 => "on_black", 1 => "on_blue", 2 => "on_cyan", 3 => "on_green", 4 => "on_yellow", 5 => "on_red", 6 => "on_magenta", 7 => "on_white" );
+    showlevel(+{ title => "Distance Map",
+                 map   => [ map {
+                   my $x = $_;
+                   [map {
+                     my $y = $_;
+                     my $d = $$dist[$x][$y];
+                     ($d == $infinity) ? +{ type => "STONE",
+                                            char => "*",
+                                            fg   => "bold white",
+                                            bg   => "on_black",
+                                          }
+                       : ($d < 70) ? +{ type => "FLOOR",
+                                        char => ($d % 10),
+                                        fg   => "bold white",
+                                        bg   => $bg{($d / 10)},
+                                      }
+                       : +{ type => "FLOOR",
+                            char => ($d % 10),
+                            fg   => "bold yellow",
+                            bg   => "on_black",
+                          };
+                   } 0 .. $ymax]
+                 } 0 .. $xmax]})
+  }
+  return $dist;
+}
+
 sub distance_walking {
   my ($map, $ox, $oy, $tx, $ty) = @_;
   croak "Wat: distance_walking(@_)" if ((not $tx) or (not $ty) or (not $ox) or (not $oy));
@@ -230,7 +302,7 @@ sub distance_walking {
   $$dist[$ox][$oy] = 0; # Point of origin.
   my @nextgen = ([$ox, $oy]);
   while (scalar @nextgen) {
-    @lastgen = @nextgen;
+    my @lastgen = @nextgen;
     @nextgen = ();
     for my $coord (@lastgen) {
       my ($x, $y) = @$coord;
@@ -401,8 +473,7 @@ sub add_room_to_level {
         showlevel(+{ title => "(Trying to add this room)", map => $room});
         print color($arg{errorcolor} || "bold red") . "No place for door!" . color("reset");
         showlevel($level);
-        print "Press any key.\n";
-        <STDIN>;
+        pressenter("force");
       }
     }
     return $level;
@@ -549,12 +620,18 @@ sub fixwalls {
     }
   }
   if ($arg{checkstone}) {
-    # Check for stone adjacent to floor, make it wall:
     for my $x (1 .. $xmax) {
       for my $y (1 .. $ymax) {
+        # Check for stone adjacent to floor, make it wall:
         if ($$map[$x][$y]{type} =~ /STONE/) {
           if (countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE/)) {
             $$map[$x][$y] = terrain("WALL");
+          }
+        }
+        # Also check for wall surrounded by wall/stone, and make it stone:
+        if ($$map[$x][$y]{type} eq "WALL") {
+          if (countadjacent($map, $x, $y, qr/WALL|STONE/) == 8) {
+            $$map[$x][$y] = terrain("STONE");
           }
         }
       }
@@ -614,6 +691,17 @@ sub blankmap {
   } 0 .. $xmax];
 }
 
+sub copy_map {
+  my ($orig) = @_;
+  return [map {
+          my $x = $_;
+          [ map {
+            my $y = $_;
+            +{ %{$$orig[$x][$y]} }
+          } 0 .. $ymax]
+        } 0 .. $xmax];
+}
+
 sub walls_around_room {
   my ($map) = @_;
   # Convert any undecided tiles that are adjacent to floor into walls.
@@ -637,22 +725,46 @@ sub generate_lake {
     $shallow ||= "SHALLOW";
   } elsif (25 > rand 100) {
     $deep    ||= "STONE";
-    $shallow ||= "WALL";
+    $shallow ||= "FLOOR";
   } elsif (35 > rand 100) {
     $deep    ||= "LAVA";
-    $shallow ||= ((35 > rand 100) ? "LAVA" : "FLOOR")
+    $shallow ||= "FLOOR";
   } else {
-    $deep    ||= "STONE";
+    $deep    ||= "LAKE";
     $shallow ||= "FLOOR";
   }
   $lxmax ||= 3 + int($xmax / 2);
   $lymax ||= 2 + int($ymax / 3);
   my $room = walls_around_room(generate_room(undef, $lxmax, $lymax));
-  return convert_terrain(convert_terrain($room, qr/FLOOR|CORRIDOR/, terrain($deep)),
-                         qr/WALL|STONE/, terrain($shallow));
+  return (convert_terrain(convert_terrain($room, qr/FLOOR|CORRIDOR/, terrain($deep)),
+                          qr/WALL|STONE/, terrain($shallow)),
+          $deep, $shallow);
 }
 
 sub generate_room {
+  my ($rno, $rxmax, $rymax, @arg) = @_;
+  $rxmax ||= $xmax;
+  $rymax ||= $ymax;
+  my $room = initiate_room($rno, $rxmax, $rymax, @arg);
+  my ($rxa, $rya, $rxb, $ryb) = getextrema($room);
+  my $xsize = ($rxb + 1 - $rxa);
+  my $ysize = ($ryb + 1 - $rya);
+  if (($xsize < 6) or ($ysize < 4) or (not defined $rno)) {
+    return $room;
+  }
+  my $island = initiate_room(undef,
+                             int(($xsize / 2) + rand int($xsize / 4)),
+                             int(($ysize * 2 / 3) + rand int($ysize / 4)),
+                             @arg);
+  my $difference = smoothe_map(fixwalls(walls_around_room(subtract_room($room, $island)),
+                                        checkstone => "yes"));
+  if (is_well_connected($difference)) {
+    return $difference;
+  }
+  return $room;
+}
+
+sub initiate_room {
   my ($rno, @arg) = @_;
   carp("generate_room(" . ((defined $rno) ? $rno : "undef") . ", @arg)") if ($debug =~ /carp/);
   print "." if $debug =~ /dots/;
@@ -662,14 +774,14 @@ sub generate_room {
      [ 30 => sub { return organic_x_room(@_);     } ],
      [ 30 => sub { return elipseroom(@_);         } ],
      [ 30 => sub { return multirect_room(@_);     } ],
-     [ 30 => sub { return cavern_room(@_);        } ],
+     [ 90 => sub { return cavern_room(@_);        } ],
      [ 30 => sub { return quadrilateral_room(@_); } ],
      [ 30 => sub { return triangle_room(@_);      } ],
     );
   if (defined $rno) {
     # These kinds should never be used for lakes, only for actual rooms:
     push @rtype, [ 15 => sub { return vestibule(@_);        } ];
-    push @rtype, [ 25 => sub { return dead_corridor(@_);    } ];
+    push @rtype, [ 20 => sub { return dead_corridor(@_);    } ];
     push @rtype, [ 20 => sub { return rectangular_room(@_); } ];
     # This kind only ever fits if done pretty early on:
     push @rtype, [ ((5 - $rno) * 5) => sub { return barbell_room(@_); } ] if $rno < 5;
@@ -681,7 +793,7 @@ sub generate_room {
   for my $rt (@rtype) {
     $sum += $$rt[0];
     if ($sum >= $type) {
-      my $room = $$rt[1]->(@arg);
+      my $room = $$rt[1]->($rno, @arg);
       croak "Room creation failed (prob: prob $$rt[0]; sum: $sum (t $type of $psum))" if not $room;
       return $room;
     }
@@ -753,15 +865,13 @@ sub barbell_room {
       warn "Vertical barbell failed to find corridor start position.\n";
       if ($debug =~ /barbell/) {
         showlevel(+{ title => "rooms", map => $map });
-        print "Press Enter.\n";
-        <STDIN>;
+        pressenter();
       }}
     if (not @epos) {
       warn "Vertical barbell failed to find corridor end position.\n";
       if ($debug =~ /barbell/) {
         showlevel(+{ title => "rooms", map => $map });
-        print "Press Enter.\n";
-        <STDIN>;
+        pressenter();
       }}
     if ((scalar @spos) and (scalar @epos)) {
       my $startx = $spos[rand @spos];
@@ -800,15 +910,13 @@ sub barbell_room {
       warn "Horizontal barbell failed to find corridor start position.\n";
       if ($debug =~ /barbell/) {
         showlevel(+{ title => "rooms", map => $map });
-        print "Press Enter.\n";
-        <STDIN>;
+        pressenter();
       }}
     if (not @epos) {
       warn "Horizontal barbell failed to find corridor end position.\n";
       if ($debug =~ /barbell/) {
         showlevel(+{ title => "rooms", map => $map });
-        print "Press Enter.\n";
-        <STDIN>;
+        pressenter();
       }}
     if ((scalar @spos) and (scalar @epos)) {
       my $starty = $spos[rand @spos];
@@ -840,11 +948,50 @@ sub drawcorridor {
 
 sub cavern_room {
   my ($roomno, $rxmax, $rymax) = @_;
-  $rxmax ||= $xmax;
-  $rymax ||= $ymax;
-  my $sizex = int($rxmax / (2 + int rand 3));
-  my $sizey = int($rymax * 2 / (3 + int rand 3));
-  return generate_cavern($roomno, $sizex, $sizey);
+  $rxmax ||= int($xmax / (2 + int rand 3));
+  $rymax ||= int($ymax * 2 / (3 + int rand 3));
+  if (($roomno || 0) > 1) {
+    $rxmax -= int rand($rxmax * $roomno * 2 / $roomcountgoal);
+    $rymax -= int rand($rymax * $roomno * 2 / $roomcountgoal);
+  }
+  return generate_cavern($roomno, $rxmax, $rymax);
+}
+
+sub subtract_room {
+  my ($minuend, $subtrahend, $xoffset, $yoffset) = @_;
+  my $difference = copy_map($minuend);
+  my ($sax, $say, $sbx, $sby) = getextrema($subtrahend);
+  my $sxsize = $sbx + 1 - $sax;
+  my $sysize = $sby + 1 - $say;
+  if ((not defined $xoffset) or (not defined $yoffset)) {
+    my ($max, $may, $mbx, $mby) = getextrema($minuend);
+    my $mxsize = $mbx + 1 - $max;
+    my $mysize = $mby + 1 - $may;
+    $xoffset = $max + int(($mxsize - $sxsize) / 2);
+    $yoffset = $may + int(($mysize - $sysize) / 2);
+    if ($mxsize >= ($sxsize + 4)) {
+      $xoffset += int((($mxsize - $sxsize - 2) / 2) - rand($mxsize - $sxsize - 2));
+    }
+    if ($mysize >= ($sysize + 4)) {
+      $yoffset += int((($mysize - $sysize - 2) / 2) - rand($mysize - $sysize - 2));
+    }
+  }
+  for my $x (0 .. ($sxsize - 1)) {
+    for my $y (0 .. ($sysize - 1)) {
+      if ($$subtrahend[$sax + $x][$say + $y]{type} ne "UNDECIDED") {
+        $$difference[$xoffset + $x][$yoffset + $y] = terrain("UNDECIDED");
+      }
+    }
+  }
+  # Because subtraction can leave "orphaned" walls out in the middle
+  # of nowhere (which causes problems; among other things, it causes
+  # the room placement code to place rooms incorrectly, resulting in
+  # no valid place for a door over to any adjoiningin room; it also
+  # clutters up the level prematurely, preventing placement of
+  # subsequent rooms that should fit), we use convert_terrain() to
+  # strip off all the walls, then restore the ones that are still
+  # needed using walls_around_room():
+  return walls_around_room(convert_terrain($difference, qr/WALL/, terrain("UNDECIDED")));
 }
 
 sub generate_cavern {
@@ -897,8 +1044,7 @@ sub generate_cavern {
   if (not @candidate) {
     warn "No candidates for cavern ($sizex, $sizey).  Punting...\n" if $debug;
     if ($debug =~ /cavern/) {
-      print "Press Enter...\n";
-      <STDIN>;
+      pressenter();
     }
     return generate_room($roomno);
   }
@@ -976,58 +1122,8 @@ sub triangle_room {
 
   # As an optimization, we actually pre-calculate the distances from
   # that outside point to everywhere, because it's faster that way.
-  my $infinity = ($xmax * $ymax) + 1;
-  my $dist = [ map { my $x = $_; [map { $infinity } 0 .. $ymax] } 0 .. $xmax];
-  my $ox = $xmax;
-  my $oy = (int ($ymax / 2));
-  $$dist[$ox][$oy] = 0;
-  my @nextgen = ([$ox, $oy]);
-  while (scalar @nextgen) {
-    @lastgen = @nextgen;
-    @nextgen = ();
-    for my $coord (@lastgen) {
-      my ($x, $y) = @$coord;
-      my $newdist = $$dist[$x][$y] + 1;
-      #print "dist: $newdist  " if $debug =~ /triangle/;
-      for my $vector ([0, -1], [0, 1], [-1, 0], [1, 0]) {
-        my ($dx, $dy) = @$vector;
-        if (($x + $dx >= 1) and ($x + $dx <= $xmax) and
-            ($y + $dy >= 1) and ($y + $dy <= $ymax) and
-            # it's possible to take that step:
-            ($walkable{$$slate[$x + $dx][$y + $dy]{type}}) and
-            # it's shorter than any previously known path to there:
-            $$dist[$x + $dx][$y + $dy] > $newdist) {
-          #print "(" . ($x + $dx) . "," . ($y + $dy) . ") " if $debug =~ /triangle/;
-          $$dist[$x + $dx][$y + $dy] = $newdist;
-          push @nextgen, [$x + $dx, $y + $dy];
-        }}}}
-  if ($debug =~ /tridist/) {
-    my %bg = ( 0 => "on_black", 1 => "on_blue", 2 => "on_cyan", 3 => "on_green", 4 => "on_yellow", 5 => "on_red", 6 => "on_magenta", 7 => "on_white" );
-    showlevel(+{ title => "Triangle Distance Map",
-                 map   => [ map {
-                   my $x = $_;
-                   [map {
-                     my $y = $_;
-                     my $d = $$dist[$x][$y];
-                     ($d == $infinity) ? +{ type => "STONE",
-                                            char => "*",
-                                            fg   => "bold white",
-                                            bg   => "on_black",
-                                          }
-                       : ($d < 70) ? +{ type => "FLOOR",
-                                        char => ($d % 10),
-                                        fg   => "bold white",
-                                        bg   => $bg{($d / 10)},
-                                      }
-                       : +{ type => "FLOOR",
-                            char => ($d % 10),
-                            fg   => "bold yellow",
-                            bg   => "on_black",
-                          };
-                   } 0 .. $ymax]
-                 } 0 .. $xmax]})
-  }
-  # Now we just pick any set of coordinates where the distance is infinity
+  my $dist = distance_map($slate, $xmax, (int ($ymax / 2)));
+  # Now we just pick any set of coordinates where the distance is infinite
   # (and the terrain is FLOOR, not STONE, because we don't want the edge):
   my @coord = grep {
     ($$dist[$$_[0]][$$_[1]] > ($xmax * $ymax))
@@ -1040,23 +1136,22 @@ sub triangle_room {
 
   my ($x,$y) = (undef,undef);
   if (@coord) {
-    ($x, $y) = @{shift @coord};
+    ($x, $y) = @{$coord[rand @coord]};
   }
   if ((not defined $x) or (not defined $y) or ($$slate[$x][$y]{type} ne "FLOOR")) {
-    print "Triangle failed, seems to have no interior.  Punting.\nPress Enter.\n";
-    <STDIN> if $debug =~ /pause/;
+    print "Triangle failed, seems to have no interior.  Punting.\n";
+    pressenter();
     return generate_room($roomno, $rxmax, $rymax, @punt);
   } elsif ($debug =~ /triangle/) {
-    print "Found interior point at ($x,$y).\n  Press Enter.\n";
-    <STDIN> if $debug =~ /pause/;
+    print "Found interior point at ($x,$y).\n";
+    pressenter();
   }
   my $map = blankmap();
   cavern_paint_mask($slate, $map, $x, $y);
   $map = walls_around_room($map);
   if ($debug =~ /triangle/) {
     showlevel(+{ title => "Finalized Triangle", map => $map });
-    print "Press Enter.\n";
-    <STDIN> if $debug =~ /pause/;
+    pressenter();
   }
   return $map;
 }
@@ -1241,20 +1336,22 @@ sub rectangular_room {
 }
 
 sub quadrilateral_room {
-  my ($roomno, $rxmax, $rymax, @punt) = @_;
-  $rxmax ||= int ($xmax / 3);
-  $rymax ||= int ($ymax / 2);
+  my ($roomno, $specrxmax, $specrymax, @punt) = @_;
+  my $rxmax = ($specrxmax || $xmax);
+  my $rymax = ($specrymax || $ymax);
+  if ($rxmax >= 20) { $rxmax = int($rxmax / 3) + int rand($rxmax / 3); }
+  if ($rymax >= 12) { $rymax = int($rymax / 3) + int rand($rymax / 3); }
   # We pick one point in each quadrant; this ensures correct point
   # ordering but allows quite weird (including non-convex) shapes.
   # The point/quadrant mapping: a is nw, b is ne, c is se, d is sw.
-  my $ax = 1 + int rand int($rxmax / 2);
-  my $ay = 1 + int rand int($rymax / 2);
-  my $bx = 1 + int($rxmax / 2) + int rand($rxmax / 2);
-  my $by = 1 + int rand int($rymax / 2);
-  my $cx = 1 + int($rxmax / 2) + int rand($rxmax / 2);
-  my $cy = 1 + int($rymax / 2) + int rand($rymax / 2);
-  my $dx = 1 + int rand int($rxmax / 2);
-  my $dy = 1 + int($rymax / 2) + int rand($rymax / 2);
+  my $ax = 1 + int rand int($rxmax / 3);
+  my $ay = 1 + int rand int($rymax / 3);
+  my $bx = 1 + $rxmax - int rand($rxmax / 3);
+  my $by = 1 + int rand int($rymax / 3);
+  my $cx = 1 + $rxmax - int rand($rxmax / 3);
+  my $cy = 1 + $rymax - int rand($rymax / 3);
+  my $dx = 1 + int rand int($rxmax / 3);
+  my $dy = 1 + $rymax - int rand($rymax / 3);
   # We handle the drawing in much the same way as for triangles.
   my $slate = blankmap();
   drawcorridor($slate, $ax, $ay, $bx, $by, "STONE");
@@ -1262,39 +1359,35 @@ sub quadrilateral_room {
   drawcorridor($slate, $cx, $cy, $dx, $dy, "STONE");
   drawcorridor($slate, $dx, $dy, $ax, $ay, "STONE");
   $slate = convert_terrain($slate, qr/UNDECIDED/, terrain("FLOOR"));
-  showlevel(+{ title => "Preliminary Quadrilateral", map => $slate }) if $debug =~ /quadrilateral/;
+  if ($debug =~ /quadrilateral/) {
+    for my $x (1 .. int($rxmax / 2)) {
+      for my $y (1 .. int($rymax / 2)) {
+        $$slate[$x][$y]{fg} = "cyan";
+      }
+      for my $y ((1 + int($rymax / 2)) .. $rymax) {
+        $$slate[$x][$y]{fg} = "green";
+      }}
+    for my $x ((1 + int($rxmax / 2)) .. $rxmax) {
+      for my $y (1 .. int($rymax / 2)) {
+        $$slate[$x][$y]{fg} = "red";
+      }
+      for my $y ((1 + int($rymax / 2)) .. $rymax) {
+        $$slate[$x][$y]{fg} = "yellow";
+      }}
+    showlevel(+{ title => "Preliminary Quadrilateral", map => $slate });
+  }
   # As with triangles (see comment there), find a point inside:
-  my $infinity = ($xmax * $ymax) + 1;
-  my $dist = [ map { my $x = $_; [map { $infinity } 0 .. $ymax] } 0 .. $xmax];
-  my $ox = $xmax;
-  my $oy = (int ($ymax / 2));
-  $$dist[$ox][$oy] = 0;
-  my @nextgen = ([$ox, $oy]);
-  while (scalar @nextgen) {
-    @lastgen = @nextgen;
-    @nextgen = ();
-    for my $coord (@lastgen) {
-      my ($x, $y) = @$coord;
-      my $newdist = $$dist[$x][$y] + 1;
-      for my $vector ([0, -1], [0, 1], [-1, 0], [1, 0]) {
-        my ($dx, $dy) = @$vector;
-        if (($x + $dx >= 1) and ($x + $dx <= $xmax) and
-            ($y + $dy >= 1) and ($y + $dy <= $ymax) and
-            ($walkable{$$slate[$x + $dx][$y + $dy]{type}}) and
-            $$dist[$x + $dx][$y + $dy] > $newdist) {
-          $$dist[$x + $dx][$y + $dy] = $newdist;
-          push @nextgen, [$x + $dx, $y + $dy];
-        }}}}
+  my $dist = distance_map($slate, $xmax, int($ymax / 2));
   my @coord = grep {
     ($$dist[$$_[0]][$$_[1]] > ($xmax * $ymax))
       and $$slate[$$_[0]][$$_[1]]{type} eq "FLOOR"
     } map { my $x = $_; map { [ $x, $_ ] } (1 .. $rymax); } randomorder(1 .. $rxmax);
   my ($x,$y) = (undef,undef);
-  if (@coord) { ($x, $y) = @{shift @coord}; }
+  if (@coord) { ($x, $y) = @{$coord[rand @coord]}; }
   if ((not defined $x) or (not defined $y) or ($$slate[$x][$y]{type} ne "FLOOR")) {
-    print "Quadrilateral failed, seems to have no interior.  Punting.\nPress Enter.\n";
-    <STDIN> if $debug =~ /pause/;
-    return generate_room($roomno, $rxmax, $rymax, @punt);
+    print "Quadrilateral failed, seems to have no interior.  Punting.\n";
+    pressenter();
+    return generate_room($roomno, $specrxmax, $specrymax, @punt);
   }
   my $map = blankmap();
   croak "blank map is empty" if not $map;
@@ -1319,8 +1412,7 @@ sub organic_x_room {
   my $tgtarea = int((($arg{minfloorpct} || 25) + rand(($arg{maxfloorpct} || 80) - ($arg{minfloorpct} || 25))) * $maxarea / 100);
   if ($debug =~ /xroom/) {
     print "Room specs: $xsize by $ysize, want $tgtarea of $maxarea tiles to be floor.\n";
-    print "Press Enter.\n" if $debug =~ /pause/;
-    <STDIN> if $debug =~ /pause/;
+    pressenter();
   }
   my $floortiles = 0;
   my $tries = $maxarea * 100;
@@ -1359,6 +1451,14 @@ sub organic_x_room {
     $map = smoothe_map($map);
   }
   return walls_around_room($map);
+}
+
+sub pressenter {
+  my ($force) = @_;
+  if ($force or ($debug =~ /pause/)) {
+    print "Press Enter.\n";
+    <STDIN>;
+  }
 }
 
 sub showlevel {
@@ -1494,7 +1594,6 @@ sub terrain {
     use Carp;
     use Data::Dumper; print Dumper(\%ttyp);
     print color($arg{errorbg} || "on_black") . color($arg{errorfg} || "red") . "Unknown terrain type: '$type'" . color("reset") . "\n";
-    carp "Press Enter...\n";
-    <STDIN>;
+    pressenter("force");
   }
 }
