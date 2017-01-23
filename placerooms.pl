@@ -84,6 +84,8 @@ if ((90 > rand 100) or ($debug =~ /fixcorr/)) {
   }
 }
 
+my $lakeprob = $arg{lakeprob} || (($debug =~ /lake/) ? 100 : 5);
+if ($lakeprob >= rand 100) {
 for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 20)) {
   if ((15 > int rand 100) or ($debug =~ /unconditional/)) {
     # Do a small but completely unconditional lake; we rely on the
@@ -172,6 +174,7 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
   if ($debug =~ /lake|placement/) {
     showlevel(+{title => "After Lake $lakenum", map => $$level{map}});
   }
+}
 }
 
 for my $sdoornum (1 .. int(($xmax / 8) + rand($xmax / 14))) {
@@ -649,7 +652,7 @@ sub fixwalls {
   my @wmap = map { [map { 0 } 0 .. $ymax ] } 0 .. $xmax;
   for my $x (2 .. ($xmax - 1)) {
     for my $y (2 .. ($ymax - 1)) {
-      if ($$map[$x][$y]{type} =~ /FLOOR|SHALLOW|LAKE/) {
+      if ($$map[$x][$y]{type} =~ /FLOOR|SHALLOW|LAKE|TRAP|LAVA/) {
         $wmap[$x+1][$y]   |= $dirbit{NORTH} | $dirbit{SOUTH};
         $wmap[$x-1][$y]   |= $dirbit{NORTH} | $dirbit{SOUTH};
         $wmap[$x][$y-1]   |= $dirbit{EAST}  | $dirbit{WEST};
@@ -759,7 +762,51 @@ sub generate_room {
   my $difference = smoothe_map(fixwalls(walls_around_room(subtract_room($room, $island)),
                                         checkstone => "yes"));
   if (is_well_connected($difference)) {
-    return $difference;
+    $room = $difference;
+  }
+  if (($arg{trapprob} || 45) > rand 100) {
+    my @place;
+    for my $x (1 .. $rxmax) {
+      for my $y (1 .. $rymax) {
+        if ($$room[$x][$y]{type} eq "FLOOR") {
+          push @place, [$x,$y];
+        }
+      }
+    }
+    @place = randomorder(@place);
+    my $maxtraps = $arg{maxtraps} || 5;
+    if (($rxmax < 10) or ($rymax < 4)) {
+      $maxtraps = int($maxtraps / 2);
+    }
+    my $tnum;
+    my @trap = map { randomtrap() } 1 .. int rand $maxtraps;
+    for my $trap (@trap) {
+      my $didtrap = 0;
+      while ((scalar @place) and not $didtrap) {
+        my ($cx, $cy) = @{shift @place};
+        my $orig = $$room[$cx][$cy];
+        $$room[$cx][$cy] = $trap;
+        my $ok = 1;
+        my @adj = grep {
+          my ($x,$y) = @$_;
+          ($x >= 1) and ($x <= $xmax) and ($y >= 1) and ($y <= $ymax) and
+            $walkable{$$room[$x][$y]{type}}
+        } ([$cx + 1, $cy], [$cx - 1, $cy], [$cx, $cy + 1], [$cx, $cy - 1]);
+        my ($i, $j, $done) = (0, 1, 0);
+        while (($i + 1 < scalar @adj) and $ok) {
+          my ($ix, $iy) = @{$adj[$i]};
+          my ($jx, $jy) = @{$adj[$j]};
+          $ok = 0 if (distance_walking($room, $ix, $iy, $jx, $jy) > ($xmax * $ymax));
+          $j++; if ($j >= scalar @adj) { $i++; $j = $i + 1; }}
+        if ($ok) {
+          $didtrap = 1;
+          if ($debug =~ /trap/) {
+            $tnum++;
+            showlevel(+{ title => "Placed Trap $tnum ($$trap{name}) of " . scalar @trap . " ($maxtraps maximum).", map => $room });
+          }
+        } else {
+          $$room[$cx][$cy] = $orig;
+        }}}
   }
   return $room;
 }
@@ -836,6 +883,7 @@ sub barbell_room {
   }
 
   my $map = blankmap();
+  my @corrtile = ();
   if ($dovert) {
     # Room one goes to the north:
     my $offsetone = 1 - $oymin;
@@ -878,7 +926,7 @@ sub barbell_room {
       my $endx   = $epos[rand @epos];
       $$map[$startx][$oymax + $offsetone] = terrain("DOOR");
       $$map[$endx][$tymin + $offsettwo] = terrain("DOOR");
-      drawcorridor($map, $startx, $oymax + $offsetone + 1, $endx, $tymin + $offsettwo - 1);
+      @corrtile = drawcorridor($map, $startx, $oymax + $offsetone + 1, $endx, $tymin + $offsettwo - 1);
     }
   } else {
     # Do east-to-west barbell.
@@ -923,7 +971,20 @@ sub barbell_room {
       my $endy   = $epos[rand @epos];
       $$map[$oxmax + $offsetone][$starty] = terrain("DOOR");
       $$map[$txmin + $offsettwo][$endy] = terrain("DOOR");
-      drawcorridor($map, $oxmax + $offsetone + 1, $starty, $txmin + $offsettwo - 1, $endy);
+      @corrtile = drawcorridor($map, $oxmax + $offsetone + 1, $starty, $txmin + $offsettwo - 1, $endy);
+    }
+  }
+  if (($arg{barbell_edgeprob} || 45) > rand 100) {
+    for my $t (@corrtile) {
+      my ($cx, $cy) = @$t;
+      for my $x (($cx - 1) .. ($cx + 1)) {
+        for my $y (($cy - 1) .. ($cy + 1)) {
+          if (($x > 1) and ($x < $xmax) and ($y > 1) and ($y < $ymax) and
+             ($$map[$x][$y]{type} eq "UNDECIDED")) {
+            $$map[$x][$y] = terrain($arg{corridor_edge_terrain} || "STONE");
+          }
+        }
+      }
     }
   }
   return $map;
@@ -933,17 +994,19 @@ sub drawcorridor {
   my ($map, $ox, $oy, $tx, $ty, $terrain) = @_;
   my $xdir = ($tx <=> $ox);
   my $ydir = ($ty <=> $oy);
+  my @tile;
   $$map[$ox][$oy] = terrain($terrain || "CORR");
   my $dx = abs($tx - $ox);
   my $dy = abs($ty - $oy);
   if ($dx or $dy) {
     my $pick = rand($dx + $dy);
     if ($pick > $dx) {
-      drawcorridor($map, $ox, $oy + $ydir, $tx, $ty, $terrain);
+      @tile = drawcorridor($map, $ox, $oy + $ydir, $tx, $ty, $terrain);
     } else {
-      drawcorridor($map, $ox + $xdir, $oy, $tx, $ty, $terrain);
+      @tile = drawcorridor($map, $ox + $xdir, $oy, $tx, $ty, $terrain);
     }
   }
+  return ([$ox => $oy], @tile);
 }
 
 sub cavern_room {
@@ -1527,6 +1590,119 @@ sub randomorder {
   } map {
     [ $_ => rand 1000 ]
   } @_;
+}
+
+sub randomtrap {
+  # In NetHack, traps are distinct from terrain, so eventually I will
+  # need to make the algorithm handle that, but for now, doing it this
+  # way greatly simplifies things like %walkable.
+  my @trap = ( +{ type => "TRAP",
+                  name => "anti-magic field",
+                  char => $arg{trapchar} || "^",
+                  fg   => "bold blue",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "arrow trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "cyan",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "bear trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "cyan",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "dart trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "cyan",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "fire trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "red",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "hole",
+                  char => $arg{trapchar} || "^",
+                  fg   => "yellow",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "magic trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "bold blue",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "falling rock trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "white",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "land mine",
+                  char => $arg{trapchar} || "^",
+                  fg   => "yellow",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "level teleporter",
+                  char => $arg{trapchar} || "^",
+                  fg   => "magenta",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "pit",
+                  char => $arg{trapchar} || "^",
+                  fg   => "bold black",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "polymorph trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "bold green",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "rolling boulder trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "white",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "rust trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "blue",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "sleeping gas trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "bold blue",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "spiked pit",
+                  char => $arg{trapchar} || "^",
+                  fg   => "bold black",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "squeaky board",
+                  char => $arg{trapchar} || "^",
+                  fg   => "yellow",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "statue trap",
+                  char => $arg{statuetrapchar} || "`",
+                  fg   => "bold white",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "teleportation trap",
+                  char => $arg{trapchar} || "^",
+                  fg   => "magenta",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "trap door",
+                  char => $arg{trapchar} || "^",
+                  fg   => "yellow",
+                  bg   => $arg{trapbg} || "on_black", },
+               +{ type => "TRAP",
+                  name => "web",
+                  char => $arg{trapchar} || '"',
+                  fg   => "white",
+                  bg   => $arg{trapbg} || "on_black", },
+             );
+  return $trap[rand @trap];
 }
 
 # Be sure to update %walkable and %solid if new terrains are added.
