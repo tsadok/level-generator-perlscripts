@@ -519,7 +519,7 @@ sub extend_dead_corridor {
       my $tx = $cx - $dx;
       my $ty = $cy - $dy;
       # But can we?
-      my $ttype = $$map[$tx][$ty]{type};
+      my $ttype = $$map[$tx][$ty]{type} || "ERROR";
       if ($walkable{$ttype}) {
         return "Success"; # Base case for success.
       } elsif (($ttype eq "UNDECIDED") or ($solid{$ttype})) {
