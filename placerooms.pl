@@ -59,6 +59,7 @@ my $roomcountgoal = int(($xmax / 10) * ($ymax / 6));
 my $level = +{
               title => "First Room",
               map   => ((45 > int rand 100) ? generate_cavern($roomno, $xmax, $ymax) :
+                        (25 > int rand 100) ? quadrangle_room($roomno) :
                         (85 > int rand 100) ? barbell_room($roomno) : generate_room($roomno)),
              };
 showlevel($level) if $debug =~ /placement/;
@@ -706,14 +707,15 @@ sub copy_map {
 }
 
 sub walls_around_room {
-  my ($map) = @_;
+  my ($map, $re, $type) = @_;
+  $re ||= qr/FLOOR|SHALLOW|LAKE/;
   # Convert any undecided tiles that are adjacent to floor into walls.
   for my $x (1 .. $xmax) {
     for my $y (1 .. $ymax) {
       if ($$map[$x][$y]{type} eq "UNDECIDED") {
-        my $adjfloor = countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE/);
+        my $adjfloor = countadjacent($map, $x, $y, $re);
         if ($adjfloor > 0) {
-          $$map[$x][$y] = terrain("WALL");
+          $$map[$x][$y] = terrain($type || "WALL");
         }
       }
     }
@@ -824,14 +826,16 @@ sub initiate_room {
      [ 90 => sub { return cavern_room(@_);        } ],
      [ 30 => sub { return quadrilateral_room(@_); } ],
      [ 30 => sub { return triangle_room(@_);      } ],
+     [ 30 => sub { return lollipop_room(@_);      } ],
     );
   if (defined $rno) {
     # These kinds should never be used for lakes, only for actual rooms:
     push @rtype, [ 15 => sub { return vestibule(@_);        } ];
     push @rtype, [ 20 => sub { return dead_corridor(@_);    } ];
     push @rtype, [ 20 => sub { return rectangular_room(@_); } ];
-    # This kind only ever fits if done pretty early on:
-    push @rtype, [ ((5 - $rno) * 5) => sub { return barbell_room(@_); } ] if $rno < 5;
+    # These kinds only ever fit if done pretty early on:
+    push @rtype, [ ((5 - $rno) * 10) => sub { return barbell_room(@_); } ] if $rno < 5;
+    push @rtype, [ ((3 - $rno) * 30) => sub { return quadrangle_room(@_);  } ] if $rno < 3;
   }
   my $psum = 0;
   $psum += $$_[0] for @rtype;
@@ -846,6 +850,70 @@ sub initiate_room {
     }
   }
   die "Failed to select a room type (wanted $type from $psum, only got to $sum)";
+}
+
+sub quadrangle_room {
+  my ($roomno, $rxmax, $rymax, @arg) = @_;
+  $rxmax ||= $xmax / 2;
+  $rymax ||= $ymax * 2 / 3;
+  my $xsize = int(($rxmax / 4) + rand($rxmax * 3 / 4));
+  my $ysize = int(($rymax / 3) + rand($rymax * 2 / 3));
+  # Don't try to make it too small:
+  if ($xsize < ($xmax / 10)) {
+    $xsize = int($xmax / 3);
+  }
+  if ($ysize < ($ysize / 5)) {
+    $ysize = int($ymax / 3);
+  }
+  my $xoffset = int(($xmax - $xsize) / 2);
+  my $yoffset = int(($ymax - $ysize) / 2);
+  my $map = blankmap();
+  for my $x ($xoffset .. ($xoffset + $xsize)) {
+    for my $y ($yoffset, ($yoffset + $ysize)) {
+      $$map[$x][$y] = terrain("CORR");
+    }
+  }
+  for my $x ($xoffset, ($xoffset + $xsize)) {
+    for my $y ($yoffset .. ($yoffset + $ysize)) {
+      $$map[$x][$y] = terrain("CORR");
+    }
+  }
+  $map = walls_around_room($map, qr/CORR/, "STONE");
+  if ($debug =~ /quadrangle/) {
+    showlevel(+{ title => "quadrangle", map => $map});
+  }
+  return $map;
+}
+
+sub lollipop_room {
+  my ($roomno, $rxmax, $rymax, @arg) = @_;
+  my $map = walls_around_room(elipseroom($roomno, $rxmax, $rymax, @arg));
+  my ($rxa, $rya, $rxb, $ryb) = getextrema($map);
+  my $x = int(($rxa + $rxb) / 2);
+  my $y = int(($rya + $ryb) / 2);
+  my ($dx, $dy, $len) = (0, 0, 0);
+  if (33 > int rand 100) { # Vertical corridor
+    $dy = (50 > int rand 100) ? 1 : -1;
+  } elsif (80 > int rand 100) { # Horizontal corridor
+    $dx = (50 > int rand 100) ? 1 : -1;
+  } else { # Diagonal corridor
+    $dx = (50 > int rand 100) ? 1 : -1;
+    $dy = (50 > int rand 100) ? 1 : -1;
+  }
+  while ($$map[$x][$y]{type} eq "FLOOR") {
+    $x += $dx; $y += $dy;
+  }
+  while (($x > 1) and ($x + 1 < $xmax) and
+         ($y > 1) and ($y + 1 < $ymax) and
+         ((100 - 3 * $len++ * (abs($dx) + 2 * abs($dy))) > rand 100)) {
+    $$map[$x][$y] = terrain("CORR");
+    $x += $dx; $y += $dy;
+  }
+  $map = walls_around_room($map, qr/CORR/, "STONE");
+  if ($debug =~ /lollipop/) {
+    showlevel(+{ title => "lollipop", map => $map });
+  }
+  return $map;
 }
 
 sub barbell_room {
