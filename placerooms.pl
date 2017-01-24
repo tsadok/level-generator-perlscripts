@@ -527,7 +527,7 @@ sub extend_dead_corridor {
         my $orig = $$map[$tx][$ty];
         $$map[$tx][$ty] = terrain("CORR");
         my $result = extend_dead_corridor($map, $tx, $ty, $maxiter - 1);
-        if (($result eq "Success") and ($ttype eq "WALL")) {
+        if ((($result || "") eq "Success") and ($ttype eq "WALL")) {
           # Special case, the very last spot we opened up can become a
           # door, if it was formerly a wall.  (If this is wrong,
           # fix_walls will correct it later.)
@@ -892,9 +892,9 @@ sub lollipop_room {
   my $x = int(($rxa + $rxb) / 2);
   my $y = int(($rya + $ryb) / 2);
   my ($dx, $dy, $len) = (0, 0, 0);
-  if (33 > int rand 100) { # Vertical corridor
+  if (30 > int rand 100) { # Vertical corridor
     $dy = (50 > int rand 100) ? 1 : -1;
-  } elsif (80 > int rand 100) { # Horizontal corridor
+  } elsif (60 > int rand 100) { # Horizontal corridor
     $dx = (50 > int rand 100) ? 1 : -1;
   } else { # Diagonal corridor
     $dx = (50 > int rand 100) ? 1 : -1;
@@ -903,11 +903,16 @@ sub lollipop_room {
   while ($$map[$x][$y]{type} eq "FLOOR") {
     $x += $dx; $y += $dy;
   }
+  my ($hfirst) = (50 > rand 100) ? 1 : 0;
   while (($x > 1) and ($x + 1 < $xmax) and
          ($y > 1) and ($y + 1 < $ymax) and
          ((100 - 3 * $len++ * (abs($dx) + 2 * abs($dy))) > rand 100)) {
     $$map[$x][$y] = terrain("CORR");
-    $x += $dx; $y += $dy;
+    if ($hfirst) { $x += $dx; } else { $y += $dy; }
+    if ($dx and $dy) {
+      $$map[$x][$y] = terrain("CORR");
+    }
+    if ($hfirst) { $y += $dy; } else { $x += $dx; }
   }
   $map = walls_around_room($map, qr/CORR/, "STONE");
   if ($debug =~ /lollipop/) {
