@@ -178,6 +178,61 @@ for my $lakenum (1 .. (($debug =~ /lake/) ? 2 : 0) + int rand(($xmax + $ymax) / 
 }
 }
 
+if ((($arg{negspaceprob} || 35) > rand 100) or ($debug =~ /negspace/)) {
+  for (1 .. 1 + int rand rand 4) {
+    my $mask = blankmap();
+    if (95 > rand 100) {
+      # Mask off the corner areas, we don't want those to be candidates:
+      cavern_paint_mask($$level{map}, $mask, 2, 2, qr/UNDECIDED/);
+      cavern_paint_mask($$level{map}, $mask, $xmax - 1, 2, qr/UNDECIDED/);
+      cavern_paint_mask($$level{map}, $mask, 2, $ymax - 1, qr/UNDECIDED/);
+      cavern_paint_mask($$level{map}, $mask, $xmax - 1, $ymax - 1, qr/UNDECIDED/);
+    }
+    my $count = 0;
+    if ($debug =~ /negspace/) {
+      showlevel(+{title => "Before Negative Space Calculation", map => $$level{map}});
+    }
+    my @candidate = ();
+    for my $x (randomorder(2 .. ($xmax - 1))) {
+      for my $y (randomorder(2 .. ($ymax - 1))) {
+        if (($$level{map}[$x][$y]{type} =~ /UNDECIDED/) and
+            $$mask[$x][$y]{type} eq "UNDECIDED") {
+          ++$count;
+          if ($debug =~ /negspaces/) {
+            showlevel(+{title => "Negative Space Mask $count ($x,$y)", map => $mask});
+            pressenter();
+          }
+          my $tilecount = cavern_paint_mask($$level{map}, $mask, $x, $y, qr/UNDECIDED/);
+          push @candidate, [$x, $y, $tilecount + rand(1 + 2 * $tilecount / 3)];
+        }
+      }
+    }
+    if (25 > int rand 100) {
+      # Try to pick the biggest area:
+      @candidate = sort { $$b[2] <=> $$a[2] } @candidate;
+    } else {
+      @candidate = randomorder(@candidate);
+    }
+    if ($debug =~ /negspace/) {
+      showlevel(+{title => "Negative Space Mask", map => $mask});
+      for my $c (@candidate) {
+        print "Candidate: ($$c[0],$$c[1]), $$c[2] tiles\n";
+      }
+    }
+    my ($x, $y, $size) = @{$candidate[0]};
+    if ($size > 3) {
+      my $map = blankmap();
+      cavern_paint_mask($mask, $map, $x, $y);
+      if ($debug =~ /negspace/) {
+        showlevel(+{title => "Selected Negative Space Area", map => $map});
+      }
+      cavern_paint_mask($mask, $$level{map}, $x, $y);
+      if ($debug =~ /negspace/) {
+        showlevel(+{title => "Level Plus Negative Space Area", map => $$level{map}});
+      }
+    }
+}}
+
 for my $sdoornum (1 .. int(($xmax / 8) + rand($xmax / 14))) {
   $$level{map} = fixwalls($$level{map});
   my @c = map {
@@ -1127,7 +1182,7 @@ sub subtract_room {
   # subsequent rooms that should fit), we use convert_terrain() to
   # strip off all the walls, then restore the ones that are still
   # needed using walls_around_room():
-  return walls_around_room(convert_terrain($difference, qr/WALL/, terrain("UNDECIDED")));
+  return walls_around_room(convert_terrain($difference, qr/WALL|STONE/, terrain("UNDECIDED")));
 }
 
 sub generate_cavern {
@@ -1198,24 +1253,25 @@ sub generate_cavern {
 }
 
 sub cavern_paint_mask {
-  my ($map, $mask, $x, $y) = @_;
+  my ($map, $mask, $x, $y, $re) = @_;
   my $count = 0;
   no warnings 'recursion';
-  if (($$map[$x][$y]{type} =~ /FLOOR/) and
+  $re ||= qr/FLOOR/; # Negative space reclamation uses a different regex for this.
+  if (($$map[$x][$y]{type} =~ $re) and
       ($$mask[$x][$y]{type} eq "UNDECIDED")) {
     $$mask[$x][$y] = terrain("FLOOR");
     $count++;
     if ($x > 2) {
-      $count += cavern_paint_mask($map, $mask, $x - 1, $y);
+      $count += cavern_paint_mask($map, $mask, $x - 1, $y, $re);
     }
     if ($x + 1 < $xmax) {
-      $count += cavern_paint_mask($map, $mask, $x + 1, $y);
+      $count += cavern_paint_mask($map, $mask, $x + 1, $y, $re);
     }
     if ($y > 2) {
-      $count += cavern_paint_mask($map, $mask, $x, $y - 1);
+      $count += cavern_paint_mask($map, $mask, $x, $y - 1, $re);
     }
     if ($y + 1 < $ymax) {
-      $count += cavern_paint_mask($map, $mask, $x, $y + 1);
+      $count += cavern_paint_mask($map, $mask, $x, $y + 1, $re);
     }
   }
   return $count;
