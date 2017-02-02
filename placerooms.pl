@@ -59,7 +59,7 @@ my $roomcountgoal = int(($xmax / 10) * ($ymax / 6));
 my $level = +{
               title => "First Room",
               map   => ((45 > int rand 100) ? generate_cavern($roomno, $xmax, $ymax) :
-                        (25 > int rand 100) ? quadrangle_room($roomno) :
+                        (10 > int rand 100) ? quadrangle_room($roomno) :
                         (85 > int rand 100) ? barbell_room($roomno) : generate_room($roomno)),
              };
 showlevel($level) if $debug =~ /placement/;
@@ -633,7 +633,7 @@ sub fixwalls {
   for my $x (1 .. $xmax) {
     for my $y (1 .. $ymax) {
       if ($$map[$x][$y]{type} =~ /DOOR|SDOOR/) {
-        my $floorct = countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE/);
+        my $floorct = countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE|TRAP/);
         if ($floorct < 1) {
           # Doors from one corridor to another should _usually_ be converted to secret corridor.
           if (90 > rand 100) {
@@ -642,15 +642,15 @@ sub fixwalls {
         }
         if (($x > 1) and ($y > 1) and ($x < $xmax) and ($y < $ymax) and
             (# Either it's a vertical door:
-             ($$map[$x - 1][$y]{type} =~ /FLOOR|CORR|SHALLOW|LAKE/ and
-              $$map[$x + 1][$y]{type} =~ /FLOOR|CORR|SHALLOW|LAKE/ and
+             ($$map[$x - 1][$y]{type} =~ /FLOOR|CORR|SHALLOW|LAKE|TRAP/ and
+              $$map[$x + 1][$y]{type} =~ /FLOOR|CORR|SHALLOW|LAKE|TRAP/ and
               $$map[$x][$y - 1]{type} =~ /WALL|STONE/ and
               $$map[$x][$y + 1]{type} =~ /WALL|STONE/) or
              # Else it's a horizontal door
              ($$map[$x - 1][$y]{type} =~ /WALL|STONE/ and
               $$map[$x + 1][$y]{type} =~ /WALL|STONE/ and
-              $$map[$x][$y - 1]{type} =~ /FLOOR|CORR|SHALLOW|LAKE/ and
-              $$map[$x][$y + 1]{type} =~ /FLOOR|CORR|SHALLOW|LAKE/))) {
+              $$map[$x][$y - 1]{type} =~ /FLOOR|CORR|SHALLOW|LAKE|TRAP/ and
+              $$map[$x][$y + 1]{type} =~ /FLOOR|CORR|SHALLOW|LAKE|TRAP/))) {
           # This door is okey dokey
         } else {
           if ($$map[$x][$y]{type} eq "SDOOR") {
@@ -662,7 +662,7 @@ sub fixwalls {
               for my $dy (-1 .. 1) {
                 if (($x + $dx > 1) and ($x + $dx < $xmax) and
                     ($y + $dy > 1) and ($y + $dy < $ymax) and
-                    (not $$map[$x][$y]{type} =~ /FLOOR|CORR|SHALLOW|LAKE/) and
+                    (not $$map[$x][$y]{type} =~ /FLOOR|CORR|SHALLOW|LAKE|TRAP/) and
                     ((not $dx) or (not $dy) or (50 > rand 100))) {
                   $$map[$x + $dx][$y + $dy] = terrain("FLOOR");
                 }}}
@@ -670,7 +670,7 @@ sub fixwalls {
         }
       } elsif ($$map[$x][$y]{type} =~ /CORR/) {
         # While we're at it, clean up any corridors that ended up in rooms:
-        my $floorct = countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE/);
+        my $floorct = countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE|TRAP/);
         my $corrct  = countadjacent($map, $x, $y, qr/CORR/);
         if (($floorct > 3) or (($floorct > 1) and not $corrct)) {
           $$map[$x][$y] = terrain("FLOOR");
@@ -683,7 +683,7 @@ sub fixwalls {
       for my $y (1 .. $ymax) {
         # Check for stone adjacent to floor, make it wall:
         if ($$map[$x][$y]{type} =~ /STONE/) {
-          if (countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE/)) {
+          if (countadjacent($map, $x, $y, qr/FLOOR|SHALLOW|LAKE|TRAP/)) {
             $$map[$x][$y] = terrain("WALL");
           }
         }
@@ -882,6 +882,7 @@ sub initiate_room {
      [ 30 => sub { return quadrilateral_room(@_); } ],
      [ 30 => sub { return triangle_room(@_);      } ],
      [ 30 => sub { return lollipop_room(@_);      } ],
+     [ 60 => sub { return intersection_room(@_);  } ],
     );
   if (defined $rno) {
     # These kinds should never be used for lakes, only for actual rooms:
@@ -905,6 +906,76 @@ sub initiate_room {
     }
   }
   die "Failed to select a room type (wanted $type from $psum, only got to $sum)";
+}
+
+sub intersection_room {
+  my ($roomno, $rxmax, $rymax, @arg) = @_;
+  my $map = generate_room($roomno, int($rxmax * 2 / 5), int($rymax * 2 / 3), @arg);
+  my $two = generate_room($roomno, int($rxmax * 2 / 5), int($rymax * 2 / 3), @arg);
+  my ($xoffset, $yoffset) = (0, 0);
+  my ($mapxmin, $mapymin, $mapxmax, $mapymax) = getextrema($map);
+  my ($rxa, $rya, $rxb, $ryb) = getextrema($two);
+  if ($debug =~ /intersection/) {
+    showlevel(+{ title => "Intersection: Room A ($mapxmin,$mapymin), ($mapxmax,$mapymax)", map => $map });
+    showlevel(+{ title => "Intersection: Room B ($rxa,$rya), ($rxb,$ryb)", map => $two });
+  }
+  # What are the minimum and maximum offsets that will allow the second room to fit on the map?
+  my $minxoffset = 2 - $rxa;
+  my $maxxoffset = $xmax - 1 - $rxb;
+  my $minyoffset = 2 - $rya;
+  my $maxyoffset = $ymax - 1 - $ryb;
+  # We also want the second room to overlap with the first room.  This may further restrict the offsets:
+  if ($minxoffset + $rxb < $mapxmin) { $minxoffset = $mapxmin - $rxb; }
+  if ($maxxoffset > $mapxmax)        { $maxxoffset = $mapxmax; }
+  if ($minyoffset + $ryb < $mapymin) { $minyoffset = $mapymin - $ryb; }
+  if ($maxyoffset > $mapymax)        { $maxyoffset = $mapymax; }
+  if ($debug =~ /intersection/) { print "Min offsets ($minxoffset,$minyoffset); max offsets ($maxxoffset,$maxyoffset)\n"; }
+  # With the limits established, try to pick specific offsets that actually work:
+  if (($maxxoffset > ($minxoffset + 1)) and
+      ($maxyoffset > ($minyoffset + 1))) {
+    my $tries = 7;
+    while ($tries-- > 0) {
+      $xoffset = $minxoffset + int rand ($maxxoffset - $minxoffset);
+      $yoffset = $minyoffset + int rand ($maxyoffset - $minyoffset);
+      if ($debug =~ /intersection/) {
+        print "Testing offsets: ($xoffset,$yoffset)\n";
+      }
+      for my $x ($rxa .. $rxb) {
+        for my $y ($rya .. $ryb) {
+          if (($$two[$x][$y]{type} =~ /FLOOR|CORR/) and
+              ($$map[$x + $xoffset][$y + $yoffset]{type} =~ /FLOOR|CORR/)) {
+            # This position works.  Do the thing.  The outer loops are
+            # now done, because we're going to return from the
+            # function this iteration.  $xoffset and $yoffset are it.
+            if ($debug =~ /intersection/) { print "Selected offsets: ($xoffset,$yoffset)\n"; }
+            for my $x ($rxa .. $rxb) {
+              for my $y ($rya .. $ryb) {
+                if (($$two[$x][$y]{type} eq "FLOOR") or
+                    ($walkable{$$two[$x][$y]{type}} and not
+                     $walkable{$$map[$x + $xoffset][$y + $yoffset]{type}}) or
+                    ($$map[$x + $xoffset][$y + $yoffset]{type} eq "UNDECIDED")) {
+                  $$map[$x + $xoffset][$y + $yoffset] =
+                    ($$two[$x][$y]{type} eq "TRAP") ? $$two[$x][$y] : terrain($$two[$x][$y]{type});
+                }}}
+            $map = walls_around_room($map);
+            if ($debug =~ /intersection/) {
+              showlevel( +{ title => "Intersection (combined)", map => $map });
+              pressenter();
+            }
+            return $map;
+          }
+        }
+      }
+    }
+    if ($debug =~ /intersection/) {
+      warn "Cannot use offsets ($xoffset,$yoffset)\n";
+    }
+  }
+  # If all else fails, we at least have a room, even if it's not an intersection:
+  if ($debug =~ /intersection/) {
+    warn "Intersection failed: did not find working offsets.  Returning Room A alone.";
+  }
+  return $map;
 }
 
 sub quadrangle_room {
@@ -1839,21 +1910,21 @@ sub terrain {
   my ($type, %opt) = @_;
   my %ttyp = ( FLOOR => +{ type  => "FLOOR",
                            bg    => "on_black",
-                           fg    => "white",
+                           fg    => $arg{floorcolor} || "white",
                            char  => ($arg{floorchar} || ($unicode ? '·' : ".")),
                            light => 50,
                          },
                CORR  => +{ type => "CORR",
                            char => "#",
                            bg   => "on_black",
-                           fg   => "white", },
+                           fg   => $arg{corrcolor} || "white", },
                SCORR => +{ type => "SCORR",
                            char => "#",
                            bg   => "on_black",
                            fg   => "blue",
                          },
                WALL  => +{ type => "WALL",
-                           fg   => "white",
+                           fg   => $arg{wallcolor} || "white",
                            bg   => "on_black",
                            char => $arg{wallchar} || "-",
                          },
