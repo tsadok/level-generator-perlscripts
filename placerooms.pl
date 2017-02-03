@@ -1240,6 +1240,23 @@ sub subtract_room {
   }
   for my $x (0 .. ($sxsize - 1)) {
     for my $y (0 .. ($sysize - 1)) {
+      if (($sax + $x < 1) or ($sax + $x > $xmax)) {
+        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+        croak("subtract_room: invalid x coord for subtrahend: $sax + $x = " . ($sax + $x) . "");
+      } elsif (($say + $y < 1) or ($say + $y > $ymax)) {
+        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+        croak("subtract_room: invalid y coord for subtrahend: $say + $y = " . ($say + $y) . "");
+      } elsif (($xoffset + $x < 1) or ($xoffset + $x > $xmax)) {
+        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+        croak("subtract_room: invalid x coord for difference: $xoffset + $x = " . ($xoffset + $x) . "");
+      } elsif (($yoffset + $y < 1) or ($yoffset + $y > $ymax)) {
+        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+        croak("subtract_room: invalid y coord for difference: $yoffset + $y = " . ($yoffset + $y) . "");
+      }
       if ($$subtrahend[$sax + $x][$say + $y]{type} ne "UNDECIDED") {
         $$difference[$xoffset + $x][$yoffset + $y] = terrain("UNDECIDED");
       }
