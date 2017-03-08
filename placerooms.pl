@@ -55,7 +55,10 @@ my %walkable = map { $_ => "true" } qw(FLOOR CORR SCORR DOOR SDOOR SHALLOW);
 my %solid    = map { $_ => "true" } qw(STONE WALL);
 
 my $roomno = 1;
-my $roomcountgoal = int(($xmax / 10) * ($ymax / 6));
+my $roomcountgoal = int(5 + $xmax / 25) * int(2 + $ymax / 10);
+if (($xmax >= 100) and ($ymax >= 30)) {
+  $roomcountgoal = int((($roomcountgoal + 2) / 3) + rand($roomcountgoal * 2 / 3));
+}
 my $level = +{
               title => "First Room",
               map   => ((45 > int rand 100) ? generate_cavern($roomno, $xmax, $ymax) :
@@ -577,6 +580,13 @@ sub extend_dead_corridor {
       my $ttype = $$map[$tx][$ty]{type} || "ERROR";
       if ($walkable{$ttype}) {
         return "Success"; # Base case for success.
+      } elsif (($dx == 0) and
+               ((($tx > 1) and (($walkable{$$map[$tx - 1][$ty]{type} || "ERROR"}))) or
+                (($tx + 2 < $xmax) and (($walkable{$$map[$tx + 1][$ty]{type} || "ERROR"}))) or
+                (($ty > 1) and (($walkable{$$map[$tx][$ty - 1]{type} || "ERROR"}))) or
+                (($ty + 2 < $ymax) and (($walkable{$$map[$tx][$ty + 1]{type} || "ERROR"}))))) {
+        # Lateral connection, good enough.
+        return "Success";
       } elsif (($ttype eq "UNDECIDED") or ($solid{$ttype})) {
         # Provisionally continue:
         my $orig = $$map[$tx][$ty];
@@ -1216,19 +1226,22 @@ sub cavern_room {
     $rxmax -= int rand($rxmax * $roomno * 2 / $roomcountgoal);
     $rymax -= int rand($rymax * $roomno * 2 / $roomcountgoal);
   }
-  return generate_cavern($roomno, $rxmax, $rymax);
+  my %special;
+  if (50 > rand 100) { $special{plus} = "yes"; print "special: plus\n" if $debug =~ /plus/; }
+  #if (25 > rand 100) { $special{x} = "yes"; }
+  return generate_cavern($roomno, $rxmax, $rymax, %special);
 }
 
 sub subtract_room {
   my ($minuend, $subtrahend, $xoffset, $yoffset) = @_;
   my $difference = copy_map($minuend);
   my ($sax, $say, $sbx, $sby) = getextrema($subtrahend);
+  my ($max, $may, $mbx, $mby) = getextrema($minuend);
+  my $mxsize = $mbx + 1 - $max;
+  my $mysize = $mby + 1 - $may;
   my $sxsize = $sbx + 1 - $sax;
   my $sysize = $sby + 1 - $say;
   if ((not defined $xoffset) or (not defined $yoffset)) {
-    my ($max, $may, $mbx, $mby) = getextrema($minuend);
-    my $mxsize = $mbx + 1 - $max;
-    my $mysize = $mby + 1 - $may;
     $xoffset = $max + int(($mxsize - $sxsize) / 2);
     $yoffset = $may + int(($mysize - $sysize) / 2);
     if ($mxsize >= ($sxsize + 4)) {
@@ -1237,25 +1250,32 @@ sub subtract_room {
     if ($mysize >= ($sysize + 4)) {
       $yoffset += int((($mysize - $sysize - 2) / 2) - rand($mysize - $sysize - 2));
     }
+    if ($xoffset + $sax <= 0) { $xoffset = 2 - $sax; }
+    if ($yoffset + $say <= 0) { $yoffset = 2 - $say; }
+    if ($xoffset + $sbx > $xmax) { $xoffset = $xmax - $sbx - 1; }
+    if ($yoffset + $sby > $ymax) { $yoffset = $ymax - $sby - 1; }
+    warn "Selected offsets: ($xoffset,$yoffset)\n" if $debug =~ /subtract/;
   }
   for my $x (0 .. ($sxsize - 1)) {
     for my $y (0 .. ($sysize - 1)) {
-      if (($sax + $x < 1) or ($sax + $x > $xmax)) {
-        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
-        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
-        croak("subtract_room: invalid x coord for subtrahend: $sax + $x = " . ($sax + $x) . "");
-      } elsif (($say + $y < 1) or ($say + $y > $ymax)) {
-        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
-        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
-        croak("subtract_room: invalid y coord for subtrahend: $say + $y = " . ($say + $y) . "");
-      } elsif (($xoffset + $x < 1) or ($xoffset + $x > $xmax)) {
-        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
-        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
-        croak("subtract_room: invalid x coord for difference: $xoffset + $x = " . ($xoffset + $x) . "");
-      } elsif (($yoffset + $y < 1) or ($yoffset + $y > $ymax)) {
-        warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
-        warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
-        croak("subtract_room: invalid y coord for difference: $yoffset + $y = " . ($yoffset + $y) . "");
+      if ($debug =~ /subtract/) {
+        if (($sax + $x < 1) or ($sax + $x > $xmax)) {
+          warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+          warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+          croak("subtract_room: invalid x coord for subtrahend: $sax + $x = " . ($sax + $x) . "");
+        } elsif (($say + $y < 1) or ($say + $y > $ymax)) {
+          warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+          warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+          croak("subtract_room: invalid y coord for subtrahend: $say + $y = " . ($say + $y) . "");
+        } elsif (($xoffset + $x < 1) or ($xoffset + $x > $xmax)) {
+          warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+          warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+          croak("subtract_room: invalid x coord for difference: $xoffset + $x = " . ($xoffset + $x) . "");
+        } elsif (($yoffset + $y < 1) or ($yoffset + $y > $ymax)) {
+          warn "subtrahend extrema: ($sax,$say), ($sbx,$sby); size ($sxsize,$sysize)";
+          warn "minuend extrama:    ($max,$may), ($mbx,$mby); size ($mxsize,$mysize)";
+          croak("subtract_room: invalid y coord for difference: $yoffset + $y = " . ($yoffset + $y) . "");
+        }
       }
       if ($$subtrahend[$sax + $x][$say + $y]{type} ne "UNDECIDED") {
         $$difference[$xoffset + $x][$yoffset + $y] = terrain("UNDECIDED");
@@ -1274,7 +1294,7 @@ sub subtract_room {
 }
 
 sub generate_cavern {
-  my ($roomno, $sizex, $sizey) = @_;
+  my ($roomno, $sizex, $sizey, %special) = @_;
   $sizex ||= $xmax;
   $sizey ||= $ymax;
   # Initialize map to 55% floor, 45% wall, at random:
@@ -1287,6 +1307,19 @@ sub generate_cavern {
               (55 > rand 100) ? "FLOOR" : "WALL");
     } 0 .. $ymax]
   } 0 .. $xmax];
+  if ($special{plus}) {
+    for my $x (1 .. $sizex - 1) {
+      $$map[$x][int($sizey / 2)] = +{ type => "FLOOR", bg => "on_black", fg => "green", char => "*", };
+    }
+    for my $y (1 .. $sizey - 1) {
+      $$map[int($sizex / 2)][$y] = +{ type => "FLOOR", bg => "on_black", fg => "magenta", char => "*", };
+    }
+    if ($debug =~ /plus/) {
+      showlevel(+{ title => "Cavern Plus", map => $map });
+      pressenter();
+    }
+  }
+  # TODO: if ($special{x}) {}
   # Apply usually 5 (sometimes 4 or 6, occasionally 3 or 7), rounds of smoothing:
   for my $pass (1 .. ((55 > int rand 100) ? 5 : (75 > int rand 100) ? (4 + int rand 3) : (3 + int rand 5))) {
     if ($debug =~ /cavern|smooth/) {
@@ -1336,7 +1369,10 @@ sub generate_cavern {
   print "Selected cavern has $size floor tiles.\n" if $debug =~ /cavern/;
   cavern_paint_mask($map, $cavern, $x, $y);
   $cavern = walls_around_room($cavern);
-  showlevel(+{ title => "Cavern (Finalized)", map => $cavern }) if $debug =~ /cavern/;
+  if ($debug =~ /cavern|plus/) {
+    showlevel(+{ title => "Cavern (Finalized)", map => $cavern });
+    pressenter();
+  }
   return $cavern;
 }
 
