@@ -1039,11 +1039,13 @@ sub lollipop_room {
   while ($$map[$x][$y]{type} eq "FLOOR") {
     $x += $dx; $y += $dy;
   }
+  my $jagged = (34 > rand 100) ? 1 : 0;
   my ($hfirst) = (50 > rand 100) ? 1 : 0;
   while (($x > 1) and ($x + 1 < $xmax) and
          ($y > 1) and ($y + 1 < $ymax) and
          ((100 - 3 * $len++ * (abs($dx) + 2 * abs($dy))) > rand 100)) {
     $$map[$x][$y] = terrain("CORR");
+    $hfirst = ((50 > rand 100) ? 1 : 0) if $jagged;
     if ($hfirst) { $x += $dx; } else { $y += $dy; }
     if ($dx and $dy) {
       $$map[$x][$y] = terrain("CORR");
