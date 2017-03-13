@@ -415,7 +415,7 @@ sub can_place_room {
       ($rymin + $yoffset < 1) or ($rymax + $yoffset > $ymax)) {
     return 0;
   }
-  my @wallmatch;
+  my @match;
   for my $y ($rymin .. $rymax) {
     for my $x ($rxmin .. $rxmax) {
       if ($$room[$x][$y]{type} ne "UNDECIDED") {
@@ -430,7 +430,15 @@ sub can_place_room {
           }
         } elsif ($$room[$x][$y]{type} =~ /WALL|STONE/) {
           if ($$level{map}[$xoffset + $x][$yoffset + $y]{type} =~ /WALL|DOOR|STONE/) {
-            push @wallmatch, [$x, $y];
+            push @match, [$x, $y];
+          } elsif ($$level{map}[$xoffset + $x][$yoffset + $y]{type} ne "UNDECIDED") {
+            return 0;
+          }
+        } elsif ($$room[$x][$y]{type} =~ /CORR/) { # Corridor on corridor matches.
+          if ($$level{map}[$xoffset + $x][$yoffset + $y]{type} =~ /CORR/) {
+            push @match, [$x, $y];
+          } elsif ($$level{map}[$xoffset + $x][$yoffset + $y]{type} eq "STONE") {
+            # Accept, but don't count as a match.
           } elsif ($$level{map}[$xoffset + $x][$yoffset + $y]{type} ne "UNDECIDED") {
             return 0;
           }
@@ -442,7 +450,7 @@ sub can_place_room {
       }
     }
   }
-  return @wallmatch;
+  return @match;
 }
 
 sub getextrema {
@@ -531,7 +539,7 @@ sub add_room_to_level {
         my ($x, $y) = @$coord;
         $$level{map}[$xoffset + $x][$yoffset + $y] = terrain("DOOR");
         # TODO: if there are a lot of possible locations, maybe add a secret door at another one?
-      } else {
+      } elsif ($debug =~ /door/) {
         showlevel(+{ title => "(Trying to add this room)", map => $room});
         print color($arg{errorcolor} || "bold red") . "No place for door!" . color("reset");
         showlevel($level);
@@ -891,7 +899,7 @@ sub initiate_room {
      [ 90 => sub { return cavern_room(@_);        } ],
      [ 30 => sub { return quadrilateral_room(@_); } ],
      [ 30 => sub { return triangle_room(@_);      } ],
-     [ 30 => sub { return lollipop_room(@_);      } ],
+     [ 40 => sub { return lollipop_room(@_);      } ],
      [ 60 => sub { return intersection_room(@_);  } ],
     );
   if (defined $rno) {
@@ -1028,9 +1036,9 @@ sub lollipop_room {
   my $x = int(($rxa + $rxb) / 2);
   my $y = int(($rya + $ryb) / 2);
   my ($dx, $dy, $len) = (0, 0, 0);
-  if (30 > int rand 100) { # Vertical corridor
+  if (25 > int rand 100) { # Vertical corridor
     $dy = (50 > int rand 100) ? 1 : -1;
-  } elsif (60 > int rand 100) { # Horizontal corridor
+  } elsif (50 > int rand 100) { # Horizontal corridor
     $dx = (50 > int rand 100) ? 1 : -1;
   } else { # Diagonal corridor
     $dx = (50 > int rand 100) ? 1 : -1;
@@ -1356,9 +1364,9 @@ sub generate_cavern {
   }
   @candidate = sort { $$b[2] <=> $$a[2] } @candidate;
   if (not @candidate) {
-    warn "No candidates for cavern ($sizex, $sizey).  Punting...\n" if $debug;
-    if ($debug =~ /cavern/) {
-      pressenter();
+    if ($debug =~ /cavern|placement|punt/) {
+      warn "No candidates for cavern ($sizex, $sizey).  Punting...\n";
+      pressenter() if $debug =~ /cavern|punt/;
     }
     return generate_room($roomno);
   }
@@ -1457,8 +1465,10 @@ sub triangle_room {
     ($x, $y) = @{$coord[rand @coord]};
   }
   if ((not defined $x) or (not defined $y) or ($$slate[$x][$y]{type} ne "FLOOR")) {
-    print "Triangle failed, seems to have no interior.  Punting.\n";
-    pressenter();
+    if ($debug =~ /triangle|placement|punt/) {
+      print "Triangle failed, seems to have no interior.  Punting.\n";
+      pressenter();
+    }
     return generate_room($roomno, $rxmax, $rymax, @punt);
   } elsif ($debug =~ /triangle/) {
     print "Found interior point at ($x,$y).\n";
@@ -1703,8 +1713,10 @@ sub quadrilateral_room {
   my ($x,$y) = (undef,undef);
   if (@coord) { ($x, $y) = @{$coord[rand @coord]}; }
   if ((not defined $x) or (not defined $y) or ($$slate[$x][$y]{type} ne "FLOOR")) {
-    print "Quadrilateral failed, seems to have no interior.  Punting.\n";
-    pressenter();
+    if ($debug =~ /quadrilateral|placement|punt/) {
+      print "Quadrilateral failed, seems to have no interior.  Punting.\n";
+      pressenter();
+    }
     return generate_room($roomno, $specrxmax, $specrymax, @punt);
   }
   my $map = blankmap();
