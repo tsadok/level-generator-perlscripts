@@ -896,11 +896,12 @@ sub initiate_room {
      [ 30 => sub { return organic_x_room(@_);     } ],
      [ 30 => sub { return elipseroom(@_);         } ],
      [ 30 => sub { return multirect_room(@_);     } ],
-     [ 90 => sub { return cavern_room(@_);        } ],
+     [ 75 => sub { return cavern_room(@_);        } ],
      [ 30 => sub { return quadrilateral_room(@_); } ],
      [ 30 => sub { return triangle_room(@_);      } ],
      [ 40 => sub { return lollipop_room(@_);      } ],
      [ 60 => sub { return intersection_room(@_);  } ],
+     [ 10 => sub { return cyclic_corridor(@_);    } ],
     );
   if (defined $rno) {
     # These kinds should never be used for lakes, only for actual rooms:
@@ -1026,6 +1027,28 @@ sub quadrangle_room {
   if ($debug =~ /quadrangle/) {
     showlevel(+{ title => "quadrangle", map => $map});
   }
+  return $map;
+}
+
+sub cyclic_corridor {
+  my ($roomno, $rxmax, $rymax, @arg) = @_;
+  my $map;
+  my $cycletype = int rand 8;
+  if ($cycletype <= 2) {
+    $map = triangle_room(@_);
+  } elsif ($cycletype == 3) {
+    $map = quadrilateral_room(@_);
+  } else {
+    $map = elipseroom(@_);
+  }
+  $map = walls_around_room($map);
+  if ($debug =~ /cycle|cyclic/) { showlevel(+{ title => "Cyclic Corridor, Base Map", map => $map }); }
+  $map = convert_terrain($map, qr/WALL|STONE/, terrain("CORR"));
+  if ($debug =~ /cycle|cyclic/) { showlevel(+{ title => "Cyclic Corridor, Encycled", map => $map }); }
+  $map = convert_terrain($map, qr/(?<!CORR)$/, terrain("UNDECIDED"));
+  if ($debug =~ /cycle|cyclic/) { showlevel(+{ title => "Cyclic Corridor, Just the Path", map => $map }); }
+  $map = walls_around_room($map, qr/CORR/, "STONE");
+  if ($debug =~ /cycle|cyclic/) { showlevel(+{ title => "Cyclic Corridor, Complete", map => $map }); pressenter(); }
   return $map;
 }
 
