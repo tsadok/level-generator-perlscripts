@@ -20,6 +20,7 @@ my $xmax      = $arg{xmax} || $arg{COLNO} || 79;
 my $ymax      = $arg{ymax} || $arg{ROWNO} || 20;
 my $unicode   = $arg{unicode} ? "yes" : $arg{ascii} ? undef : "yes";
 my $headcolor = $arg{headcolor} || "bold cyan";
+my $placerand = $arg{placerand} || 30;
 
 # Precalculate some ranges, as a minor optimization:
 my @rndx      = randomorder(1 .. $xmax);
@@ -497,6 +498,7 @@ sub add_room_to_level {
           my $wallmatchcount = can_place_room($level, $room, $xoffset, $yoffset, $rxmin, $rymin, $rxmax, $rymax);
           if ($wallmatchcount > 0) {
             $possible++;
+            $wallmatchcount = $wallmatchcount * ((100 - $placerand) + rand $placerand) / 100;
             if ($wallmatchcount > $bestcount) {
               $bestx = $xoffset;
               $besty = $yoffset;
@@ -899,8 +901,9 @@ sub initiate_room {
      [ 75 => sub { return cavern_room(@_);        } ],
      [ 30 => sub { return quadrilateral_room(@_); } ],
      [ 30 => sub { return triangle_room(@_);      } ],
-     [ 40 => sub { return lollipop_room(@_);      } ],
+     [ 60 => sub { return lollipop_room(@_);      } ],
      [ 60 => sub { return intersection_room(@_);  } ],
+     [ 30 => sub { return hexagonroom(@_);        } ],
      [ 10 => sub { return cyclic_corridor(@_);    } ],
     );
   if (defined $rno) {
@@ -1054,7 +1057,15 @@ sub cyclic_corridor {
 
 sub lollipop_room {
   my ($roomno, $rxmax, $rymax, @arg) = @_;
-  my $map = walls_around_room(elipseroom($roomno, $rxmax, $rymax, @arg));
+  my $map;
+  if (50 > rand 100) {
+    $map = elipseroom($roomno, int($rxmax * 2 / 3), int($rymax * 2 / 3), @arg);
+  } elsif (40 > rand 100) {
+    $map = rectangular_room($roomno, int($rxmax * 2 / 3), int($rymax * 2 / 3), @arg);
+  } else {
+    $map = elipseroom($roomno, int($rxmax * 2 / 3), int($rymax * 2 / 3), @arg);
+  }
+  $map = walls_around_room($map);
   my ($rxa, $rya, $rxb, $ryb) = getextrema($map);
   my $x = int(($rxa + $rxb) / 2);
   my $y = int(($rya + $ryb) / 2);
@@ -1504,6 +1515,58 @@ sub triangle_room {
     showlevel(+{ title => "Finalized Triangle", map => $map });
     pressenter();
   }
+  return $map;
+}
+
+sub hexagonroom {
+  my ($roomno, $rxmax, $rymax) = @_;
+  $rxmax ||= $xmax;
+  $rymax ||= $ymax;
+  my $basemax = int($rxmax / 2) - 1;
+  while ($basemax >= $rymax) { $basemax--; }
+  if ($basemax < 4) {
+    if ($debug =~ /hex|placement|punt/) {
+      warn "Hexagon won't fit, punting...\n";
+      pressenter() if $debug =~ /punt/;
+    }
+    return generate_room($roomno, $rxmax, $rymax);
+  }
+  my $map = blankmap();
+  if (50 > rand 100) {
+    my $size = 2 + int($basemax / 3) + int rand(1 + rand(($basemax * 2 / 3) - 2));
+    if (($size > ($ymax / 2)) and (75 > rand 100)) {
+      $size = 2 + int rand($size - 3);
+    }
+    my $cy = int($ymax / 2);
+    my $ys = 0;
+    for my $x (0 .. ($size * 2 + 1)) {
+      for my $y (($cy - $ys) .. ($cy + $ys)) {
+        $$map[$x + 3][$y] = terrain("FLOOR");
+      }
+      if ($x <= ($size / 2)) {
+        $ys++;
+      } elsif ($x >= ($size * 3 / 2)) {
+        $ys--;
+      }
+    }
+  } else {
+    while ($basemax * 2 + 2 >= $rymax) { $basemax--; }
+    my $cx = int($xmax / 2);
+    my $size = 2 + int($basemax / 3) + int rand(1 + rand(($basemax * 2 / 3) - 2));
+    my $xs = 0;
+    for my $y (0 .. (($size * 5 + 2) / 3 + 1)) {
+      for my $x (($cx - $xs) .. ($cx + $xs)) {
+        $$map[$x][3 + $y] = terrain("FLOOR");
+      }
+      if ($y <= ($size / 2)) {
+        $xs++;
+      } elsif ($y >= ($size * 7 / 6)) {
+        $xs--;
+      }
+    }
+  }
+  $map = fixwalls(walls_around_room($map));
+  showlevel(+{ title => "Hexagon", map => $map}) if $debug =~ /hex/;
   return $map;
 }
 
