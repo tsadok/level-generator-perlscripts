@@ -9,26 +9,27 @@ use open ":std";
 require "./fixwalls.pl";
 
 my %input = @ARGV;
-my $xmax = $input{xmax} || 28;
-my $ymax = $input{ymax} || 15;
-my $zmax = $input{zmax} ||  3;
+my $xmax = $input{xmax} || 40;
+my $ymax = $input{ymax} || 13;
+my $zmax = $input{zmax} ||  4;
 $input{minconnectprob} = 1 if not defined $input{minconnectprob};
-$input{maxconnectprob} ||= 45;
+$input{maxconnectprob} ||= 35;
 $input{barprob} = 5 if not defined $input{barprob};
 $input{secretprob} = 5 if not defined $input{secretprob};
 
-my %mazedir = ( u => [ 0,  0, -1, "d"],
-                d => [ 0,  0,  1, "u"],
-                n => [ 0, -1,  0, "s"],
-                e => [ 1,  0,  0, "w"],
-                s => [ 0,  1,  0, "n"],
-                w => [-1,  0,  0, "e"],
+my %mazedir = (#      x   y   z  wght opposite
+               u => [ 0,  0, -1,  15, "d"],
+               d => [ 0,  0,  1,  15, "u"],
+               n => [ 0, -1,  0,  45, "s"],
+               e => [ 1,  0,  0,  30, "w"],
+               s => [ 0,  1,  0,  45, "n"],
+               w => [-1,  0,  0,  30, "e"],
               );
 
 my $reset      = chr(27) . qq{[0m};
 my $underlined = chr(27) . qq{[4m};
 
-#           name       bgr  bgg   bgb    fgr  fgg  fgb
+#           name         bgr  bgg   bgb    fgr  fgg  fgb
 my %clr = ( black    => [  0,   0,   0,    111, 111, 111],
             red      => [ 96,   0,   0,    255, 111, 111],
             green    => [  0,  96,   0,    127, 255, 127],
@@ -93,7 +94,7 @@ sub three_d_maze_helper {
   my ($xsize, $ysize, $zsize) = @_;
   my $g = 1;
   my $maze = [map { [map { [map { +{ grp => $g++, map { $_ => 0 } keys %mazedir } } 0 .. $zsize] } 0 .. $ysize] } 0 .. $xsize];
-  my @mdir = keys %mazedir;
+  my @mdir = map { ($_) x $mazedir{$_}[3] } keys %mazedir;
   my %gseen = ();
   while ($g > 1) {
     for my $x (randomorder(1 .. $xsize)) {
@@ -104,7 +105,7 @@ sub three_d_maze_helper {
           my $r = rand 100;
           if ($cprob > $r) {
             my $d = $mdir[int rand @mdir];
-            my ($dx, $dy, $dz, $odir) = @{$mazedir{$d}};
+            my ($dx, $dy, $dz, $weight, $odir) = @{$mazedir{$d}};
             if (inbounds($x + $dx, $y + $dy, $z + $dz, $xsize, $ysize, $zsize)) {
               if (($$maze[$x][$y][$z]{grp} ne $$maze[$x+$dx][$y+$dy][$z+$dz]{grp}) or
                   $input{minconnectprob} > $r) {
@@ -175,11 +176,8 @@ sub three_d_maze {
             }
           } else {
             $$map[$x][$y][$z] = terrain("WALL");
-          }
-        }
-      }
-    }
-  }
+          }}}}}
+
   # Now place the branch stairs (entrance/exit):
   for my $exit ([1, "UPEXIT"], [$zsize, "DOWNEXIT"]) {
     my ($z, $t) = @$exit;
@@ -210,9 +208,7 @@ sub three_d_fixwalls {
     for my $x (1 .. $xsize) {
       for my $y (1 .. $ysize) {
         $$map[$x][$y][$z] = $level[$z]->[$x][$y];
-      }
-    }
-  }
+      }}}
   return $map;
 }
 
