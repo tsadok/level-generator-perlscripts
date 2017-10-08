@@ -177,7 +177,7 @@ sub generate {
                    char => '}',
                    fg   => 'blue',
                    bg   => 'on_black',
-                 }, 0);
+                 }, 0, 2);
     }
   } elsif (((defined $cmdarg{riverprob}) ? $cmdarg{riverprob} : 30) > int rand 100) {
     my $edgeone = $dir_available[rand @dir_available];
@@ -380,12 +380,13 @@ sub makeriver {
 
 sub placeblob {
   my ($map, $cx, $cy, $radius, $terrain, $margin, $extrafuzz) = @_;
-  for my $x (($cx - ($radius + $extrafuzz)) .. ($cx + $radius + $extrafuzz)) {
-    for my $y (($cy - int(($radius + $extrafuzz) * 2 / 3)) .. ($cy + int(($radius + $extrafuzz) * 2 / 3))) {
+  for my $x (($cx - ($radius + $extrafuzz + 1)) .. ($cx + $radius + $extrafuzz + 1)) {
+    for my $y (($cy - $extrafuzz - int(($radius) * 2 / 3)) .. ($cy + $extrafuzz + int(($radius) * 2 / 3))) {
       my $dist = (int sqrt((($cx - $x) * ($cx - $x)) + (($cy - $y) * ($cy - $y)))) + $extrafuzz;
       if (($x >= 0 + $margin) and ($x <= $COLNO - $margin) and
           ($y >= 0 + $margin) and ($y <= $ROWNO - $margin) and
-          ((int rand $dist) < ((int rand $radius) + (int rand $extrafuzz)))) {
+          ((int rand $dist) < ((int rand $radius) #+ (int rand $extrafuzz)
+                              ))) {
         if (($$map[$x][$y]{type} eq 'POOL') and $cmdarg{doshallow}) {
           $$map[$x][$y] = +{ type => 'ROOM',
                              char => '}',
