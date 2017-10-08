@@ -248,10 +248,17 @@ sub generate {
                                             fg   => 'green'}, 1);
     }}
   for my $p (@path) {
-    $$map[$$p{x}][$$p{y}] = +{ type => 'ROOM',
-                              char => $floorchar,
-                              bg   => 'on_black',
-                              fg   => 'yellow' };
+    if (($$map[$$p{x}][$$p{y}]{type} eq 'POOL') and $cmdarg{doshallow}) {
+      $$map[$$p{x}][$$p{y}] = +{ type => 'ROOM',
+                                 char => '}',
+                                 bg   => 'on_black',
+                                 fg   => 'cyan' };
+    } elsif (($$map[$$p{x}][$$p{y}]{type} ne 'ROOM') or ($$map[$$p{x}][$$p{y}]{char} eq $floorchar)) {
+      $$map[$$p{x}][$$p{y}] = +{ type => 'ROOM',
+                                 char => $floorchar,
+                                 bg   => 'on_black',
+                                 fg   => 'yellow' };
+    }
   }
   print "Placing the stairs...\n" if $cmdarg{debug} > 1;
   # Place the actual stairs:
@@ -384,7 +391,7 @@ sub placeblob {
                              char => '}',
                              bg   => 'on_blue',
                              fg   => 'cyan', };
-        } else {
+        } elsif ($$map[$x][$y]{type} ne $$terrain{type}) {
           $$map[$x][$y] = { %$terrain };
         }
       }
