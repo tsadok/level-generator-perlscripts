@@ -165,7 +165,7 @@ sub generate {
   }
 
   # Now let's see about some water maybe...
-  if (25 > int rand 100) {
+  if (((defined $cmdarg{poolprob}) ? $cmdarg{poolprob} : 25) > int rand 100) {
     my $pcount = 3 + int rand 6;
     print "$pcount Pools\n" if $debug;
     for (1 .. $pcount) {
@@ -179,7 +179,7 @@ sub generate {
                    bg   => 'on_black',
                  }, 1);
     }
-  } elsif (33 > int rand 100) {
+  } elsif (((defined $cmdarg{riverprob}) ? $cmdarg{riverprob} : 30) > int rand 100) {
     my $edgeone = $dir_available[rand @dir_available];
     my $edgetwo = $wdir{$edgeone}{clockwise};
     if (70 > int rand 100) {
@@ -191,7 +191,7 @@ sub generate {
     print "River from $edgeone ($xone, $yone) to $edgetwo ($xtwo, $ytwo)\n" if $debug;
     makeriver($map, $xone, $yone, $xtwo, $ytwo,
               +{ type => 'POOL', char => '}', fg => 'blue', bg => 'on_black', });
-  } elsif (50 > int rand 100) {
+  } elsif (((defined $cmdarg{lakeprob}) ? $cmdarg{lakeprob} : 50) > int rand 100) {
     print "Lake and river.\n" if $debug;
     my $radius = 5 + int rand int($ROWNO / 3);
     my $lakex  = 5 + $radius + int rand($COLNO - 2 * $radius - 10);
@@ -347,7 +347,7 @@ sub dist {
 sub makeriver {
   my ($map, $x, $y, $tx, $ty, $liquid) = @_;
   my $tries = 0;
-  my $twisty = 5 + int rand 20;
+  my $twisty = 20 + int rand 30;
   my $minwidth = (50 > int rand 100) ? 2 : 1;
   my $maxwidth = $minwidth + (50 > int rand 100) ? 2 : 1;
   my $avgwidth = int(($minwidth + $maxwidth) / 2);
@@ -360,9 +360,9 @@ sub makeriver {
     if (50 > int rand 100) {
       $width += (50 > int rand 100) ? -1 : 1;
       if ($width > $maxwidth) {
-        $width--;
+        $width -= int rand 3;
       } elsif ($width < $minwidth) {
-        $width++;
+        $width += int rand 3;
       }
     }
     print "($x,$y), n($xneed,$yneed) " if $debug > 3;
@@ -373,19 +373,19 @@ sub makeriver {
       print "y $progress " if $debug > 5;
       $y += $progress * (($ty > $y) ? 1 : -1);
     }
-    placeblob($map, $x, $y, (int(($width * 2 + 1) / 4) + 1), $liquid);
+    placeblob($map, $x, $y, (int(($width * 2 + 1) / 4) + 1), $liquid, 0, 2);
   }
   print " $tries\n" if $debug > 2;
 }
 
 sub placeblob {
-  my ($map, $cx, $cy, $radius, $terrain, $margin) = @_;
-  for my $x (($cx - $radius) .. ($cx + $radius)) {
-    for my $y (($cy - int($radius * 2 / 3)) .. ($cy + int($radius * 2 / 3))) {
-      my $dist = int sqrt((($cx - $x) * ($cx - $x)) + (($cy - $y) * ($cy - $y)));
+  my ($map, $cx, $cy, $radius, $terrain, $margin, $extrafuzz) = @_;
+  for my $x (($cx - ($radius + $extrafuzz)) .. ($cx + $radius + $extrafuzz)) {
+    for my $y (($cy - int(($radius + $extrafuzz) * 2 / 3)) .. ($cy + int(($radius + $extrafuzz) * 2 / 3))) {
+      my $dist = (int sqrt((($cx - $x) * ($cx - $x)) + (($cy - $y) * ($cy - $y)))) + $extrafuzz;
       if (($x >= 0 + $margin) and ($x <= $COLNO - $margin) and
           ($y >= 0 + $margin) and ($y <= $ROWNO - $margin) and
-          ((int rand $dist) < (int rand $radius))) {
+          ((int rand $dist) < ((int rand $radius) + (int rand $extrafuzz)))) {
         if (($$map[$x][$y]{type} eq 'POOL') and $cmdarg{doshallow}) {
           $$map[$x][$y] = +{ type => 'ROOM',
                              char => '}',
