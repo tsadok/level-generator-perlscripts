@@ -4,16 +4,19 @@ use utf8;
 use open ':encoding(UTF-8)';
 use open ":std";
 
-my %cmdarg = @_;
-
-my $debug        = $cmdarg{debug} || 0;
-my $usecolor     = (defined $cmdarg{debug}) ? $cmdarg{debug} : 1;
-my $COLNO        = $cmdarg{xmax} || $cmdarg{COLNO} || 75;
-my $ROWNO        = $cmdarg{ymax} || $cmdarg{ROWNO} || 20;
-my $floorchar    = $cmdarg{floorchar} || '·';
+my %cmdarg = @ARGV;
 
 use strict;
 use Term::ANSIColor;
+
+my $debug        = $cmdarg{debug} || 0;
+my $usecolor     = (defined $cmdarg{usecolor}) ? $cmdarg{usecolor} : 1;
+my $COLNO        = $cmdarg{xmax} || $cmdarg{COLNO} || 75;
+my $ROWNO        = $cmdarg{ymax} || $cmdarg{ROWNO} || 20;
+my $floorchar    = $cmdarg{floorchar} || '·';
+my $dobg         = (defined $cmdarg{dobackground}) ? $cmdarg{dobackground} : 1;
+
+print "Debug mode enabled.\n" if $debug;
 
 my %wdir = ( E => +{ bit => 1, dx =>  1, dy =>  0, clockwise => 'S', },
              N => +{ bit => 2, dx =>  0, dy => -1, clockwise => 'E', },
@@ -41,6 +44,7 @@ sub generate {
        char => '?',
      };
   } 0 .. $ROWNO ] } 0 .. $COLNO];
+  print "Generating a map...\n" if $cmdarg{debug} > 1;
 
   my @pos = map {
     my $x = $_;
@@ -53,6 +57,7 @@ sub generate {
     my $opi = int rand @pos;
     ($pos[$pi], $pos[$opi]) = ($pos[$opi], $pos[$pi]);
   }
+  print "Populating the map with random terrain...\n" if $cmdarg{debug} > 1;
   for my $pi (0 .. ((scalar @pos) - 1)) {
     my ($x, $y) = @{$pos[$pi]};
     my $thresshold = (70 > int rand 100) ? 5 : 6;
@@ -81,6 +86,7 @@ sub generate {
 
   # Now let's place a few denser clusters of trees
   # interspersed with clearings.
+  print "Placing clusters and clearings...\n" if $cmdarg{debug} > 1;
   my $minx = -2;
   while ($minx < ($COLNO - 5)) {
     my $maxx = $minx + 6 + int rand 3;
@@ -135,6 +141,7 @@ sub generate {
 
   if ($cmdarg{bordertrees}) {
     # Surrouned the outer edge with unchoppable trees.
+    print "Placing trees around the border...\n" if $cmdarg{debug} > 1;
     for my $x (0 .. $COLNO) {
       $$map[$x][0] = +{ type => 'TREE',
                         char => '#',
@@ -159,7 +166,6 @@ sub generate {
 
   # Now let's see about some water maybe...
   if (25 > int rand 100) {
-    # pools of water
     my $pcount = 3 + int rand 6;
     print "$pcount Pools\n" if $debug;
     for (1 .. $pcount) {
@@ -174,7 +180,6 @@ sub generate {
                  }, 1);
     }
   } elsif (33 > int rand 100) {
-    # edge-to-edge river
     my $edgeone = $dir_available[rand @dir_available];
     my $edgetwo = $wdir{$edgeone}{clockwise};
     if (70 > int rand 100) {
@@ -187,7 +192,6 @@ sub generate {
     makeriver($map, $xone, $yone, $xtwo, $ytwo,
               +{ type => 'POOL', char => '}', fg => 'blue', bg => 'on_black', });
   } elsif (50 > int rand 100) {
-    # Single lake with a river to the edge.
     print "Lake and river.\n" if $debug;
     my $radius = 5 + int rand int($ROWNO / 3);
     my $lakex  = 5 + $radius + int rand($COLNO - 2 * $radius - 10);
@@ -201,7 +205,9 @@ sub generate {
               +{ type => 'POOL', char => '}', fg => 'blue', bg => 'on_black', }, 1);
   }
 
-  # Place the up stairs...
+  print "Choosing stair locations...\n" if $cmdarg{debug} > 1;
+  # Choose a location for the up stairs...
+  my ($up, $down);
   my ($x, $y) = (-1, -1);
   my $tries = 0;
   while ((($x < 2) or ($y < 1) or ($x + 4 >= $COLNO) or ($y + 2 >= $ROWNO) or
@@ -215,12 +221,8 @@ sub generate {
                                 char => $floorchar,
                                 bg   => 'on_black',
                                 fg   => 'white', }, 1);
-  $$map[$x][$y] = +{ type => 'STAIR',
-                    char => '<',
-                    bg   => 'on_red',
-                    fg   => 'white',
-                   };
-  # And the down stairs...
+  $up = +{ x => $x, y => $y };
+  # Choose a location for the down stairs...
   ($x, $y) = (-1, -1);
   $tries = 0;
   while ((($x < 2) or ($y < 1) or ($x + 4 >= $COLNO) or ($y + 2 >= $ROWNO) or
@@ -234,13 +236,105 @@ sub generate {
                                 char => $floorchar,
                                 bg   => 'on_black',
                                 fg   => 'white', }, 1);
-  $$map[$x][$y] = +{ type => 'STAIR',
-                    char => '>',
-                    bg   => 'on_red',
-                    fg   => 'white',
-                  };
-
+  $down = +{ x => $x, y => $y };
+  # Make a path between them:
+  print "Creating a stair-to-stair path...\n" if $cmdarg{debug} > 1;
+  my @path = dopath($down, $up);
+  for my $p (@path) {
+    if ($$map[$$p{x}][$$p{y}]{type} ne 'ROOM') {
+      placeblob($map, $$p{x}, $$p{y}, 2, +{ type => 'ROOM',
+                                            char => $floorchar,
+                                            bg   => 'on_black',
+                                            fg   => 'green'}, 1);
+    }}
+  for my $p (@path) {
+    $$map[$$p{x}][$$p{y}] = +{ type => 'ROOM',
+                              char => $floorchar,
+                              bg   => 'on_black',
+                              fg   => 'yellow' };
+  }
+  print "Placing the stairs...\n" if $cmdarg{debug} > 1;
+  # Place the actual stairs:
+  $$map[$$down{x}][$$down{y}] = +{ type => 'STAIR',
+                                   char => '>',
+                                   bg   => 'on_red',
+                                   fg   => 'white',
+                                 };
+  $$map[$$up{x}][$$up{y}] = +{ type => 'STAIR',
+                               char => '<',
+                               bg   => 'on_red',
+                               fg   => 'white',
+                             };
+  print "Level complete.\n" if $cmdarg{debug} > 1;
   return $map;
+}
+
+sub posadd {
+  my ($p, $dir) = @_;
+  return +{ x => $$p{x} + $wdir{$dir}{dx},
+            y => $$p{y} + $wdir{$dir}{dy},
+          };
+}
+
+sub dopath {
+  my ($dest, @path) = @_;
+  my $src = $path[-1];
+  if ($cmdarg{debugpath}) {
+    $|=1;
+    print color "bold cyan on_black";
+    print "dopath: to ($$dest{x},$$dest{y}) from ($$src{x},$$src{y}), existing path is " . @path . " points long.\n";
+    <STDIN> if $debug > 7;
+    print color "reset";
+  }
+  my $dist = dist($src, $dest);
+  if ($dist < 2) {
+    print "$dist < 2: finish up.\n" if $cmdarg{debugpath};
+    push @path, $dest;
+    return @path;
+  } elsif ($dist > 8) { # Long way to go, so subdivide:
+    my $fuzz = 3 + int rand($dist / 4);
+    print "$dist > 7: subdivide with $fuzz fuzz.\n" if $cmdarg{debugpath};
+    my $med = +{%$dest};
+    if (abs($$src{x} - $$dest{x}) >
+        abs($$src{y} - $$dest{y})) {
+      # aim for horizontal halfway
+      $$med{x} = int(($$src{x} + $$dest{x}) / 2);
+      $$med{y} = ($$med{y} + (((50 > rand 100) ? 1 : -1) * $fuzz)) % $ROWNO;
+      if ($$med{y} < 2) { $$med{y} = 2; }
+      if ($$med{y} + 2 >= $ROWNO) { $$med{y} = $ROWNO - 3; }
+    } else {
+      # aim for vertical halfway
+      $$med{y} = int(($$src{y} + $$dest{y}) / 2);
+      $$med{x} = ($$med{x} + (((50 > rand 100) ? 1 : -1) * $fuzz)) % $COLNO;
+      if ($$med{x} < 3) { $$med{x} = 3; }
+      if ($$med{x} + 3 >= $COLNO) { $$med{x} = $COLNO - 4; }
+    }
+    while (dist($med, $dest) > dist($src, $dest)) {
+      my $old = +{%$med};
+      $$med{x} = int(($$med{x} + $$src{x}) / 2);
+      $$med{y} = int(($$med{y} + $$src{y}) / 2);
+      if ($$med{x} == $$old{x} and $$med{y} == $$old{y}) {
+        # prevent infinite loops in a weird edge case:
+        $med = +{%$dest};
+      }
+    }
+    return dopath($dest, dopath($med, @path));
+  } else {
+    # We're close now.  Head straight there:
+    print "$dist is close: head straight there.\n" if $cmdarg{debugpath};
+    my @pos = sort {
+      dist($a, $dest) <=> dist($b, $dest)
+    } randomorder(map { posadd($src, $_) } keys %wdir);
+    push @path, $pos[int rand rand rand 3];
+    return dopath($dest, @path);
+  }
+}
+
+sub dist {
+  my ($pta, $ptb) = @_;
+  my $xdist = abs($$pta{x} - $$ptb{x});
+  my $ydist = abs($$pta{y} - $$ptb{y});
+  return int sqrt(($xdist * $xdist) + ($ydist * $ydist));
 }
 
 sub makeriver {
@@ -285,7 +379,14 @@ sub placeblob {
       if (($x >= 0 + $margin) and ($x <= $COLNO - $margin) and
           ($y >= 0 + $margin) and ($y <= $ROWNO - $margin) and
           ((int rand $dist) < (int rand $radius))) {
-        $$map[$x][$y] = { %$terrain };
+        if (($$map[$x][$y]{type} eq 'POOL') and $cmdarg{doshallow}) {
+          $$map[$x][$y] = +{ type => 'ROOM',
+                             char => '}',
+                             bg   => 'on_blue',
+                             fg   => 'cyan', };
+        } else {
+          $$map[$x][$y] = { %$terrain };
+        }
       }
     }
   }
@@ -460,7 +561,8 @@ sub showmap {
   for my $cy (0 .. $ROWNO) {
     print sprintf "%02d ", $cy;
     for my $cx (0 .. $COLNO) {
-      print color "$$map[$cx][$cy]{fg} $$map[$cx][$cy]{bg}" if $usecolor;
+      my $clrbg = ($dobg) ? qq[ $$map[$cx][$cy]{bg}] : "";
+      print color "$$map[$cx][$cy]{fg}$clrbg" if $usecolor;
       print $$map[$cx][$cy]{char};
     }
     print color "reset" if $usecolor;
@@ -472,3 +574,6 @@ sub showmap {
   }
 }
 
+sub randomorder {
+  return map { $$_[0] } sort { $$a[1] <=> $$b[1] } map { [ $_ => rand 1000 ] } @_;
+}
