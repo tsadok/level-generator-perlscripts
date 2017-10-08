@@ -4,11 +4,13 @@ use utf8;
 use open ':encoding(UTF-8)';
 use open ":std";
 
-my $debug        = 0;
-my $usecolor     = 1;
-my $COLNO        = 79;#90;#79;
-my $ROWNO        = 20;#35;#20;
-my $floorchar    = '·';
+my %cmdarg = @_;
+
+my $debug        = $cmdarg{debug} || 0;
+my $usecolor     = (defined $cmdarg{debug}) ? $cmdarg{debug} : 1;
+my $COLNO        = $cmdarg{xmax} || $cmdarg{COLNO} || 75;
+my $ROWNO        = $cmdarg{ymax} || $cmdarg{ROWNO} || 20;
+my $floorchar    = $cmdarg{floorchar} || '·';
 
 use strict;
 use Term::ANSIColor;
@@ -28,7 +30,7 @@ my @neighbormatrix = ([-1, -1], [0, -1], [1, -1],
 my $map = generate();
 
 showmap($map);
-appendhtml($map);
+appendhtml($map) if $cmdarg{dohtml};
 exit 0; # subroutines follow
 
 sub generate {
@@ -131,26 +133,28 @@ sub generate {
     $minx = $maxx + 1;
   }
 
-  # Surrouned the outer edge with unchoppable trees.
-  for my $x (0 .. $COLNO) {
-    $$map[$x][0] = +{ type => 'TREE',
-                      char => '#',
-                      fg   => 'green',
-                      bg   => 'on_black',  };
-    $$map[$x][$ROWNO] = +{ type => 'TREE',
-                           char => '#',
-                           fg   => 'green',
-                           bg   => 'on_black',  };
-  }
-  for my $y (0 .. $ROWNO) {
-    $$map[0][$y] = +{ type => 'TREE',
-                      char => '#',
-                      fg   => 'green',
-                      bg   => 'on_black',  };
-    $$map[$COLNO][$y] = +{ type => 'TREE',
-                           char => '#',
-                           fg   => 'green',
-                           bg   => 'on_black',  };
+  if ($cmdarg{bordertrees}) {
+    # Surrouned the outer edge with unchoppable trees.
+    for my $x (0 .. $COLNO) {
+      $$map[$x][0] = +{ type => 'TREE',
+                        char => '#',
+                        fg   => 'green',
+                        bg   => 'on_black',  };
+      $$map[$x][$ROWNO] = +{ type => 'TREE',
+                             char => '#',
+                             fg   => 'green',
+                             bg   => 'on_black',  };
+    }
+    for my $y (0 .. $ROWNO) {
+      $$map[0][$y] = +{ type => 'TREE',
+                        char => '#',
+                        fg   => 'green',
+                        bg   => 'on_black',  };
+      $$map[$COLNO][$y] = +{ type => 'TREE',
+                             char => '#',
+                             fg   => 'green',
+                             bg   => 'on_black',  };
+    }
   }
 
   # Now let's see about some water maybe...
