@@ -380,13 +380,12 @@ sub makeriver {
 
 sub placeblob {
   my ($map, $cx, $cy, $radius, $terrain, $margin, $extrafuzz) = @_;
-  for my $x (($cx - ($radius + $extrafuzz + 1)) .. ($cx + $radius + $extrafuzz + 1)) {
-    for my $y (($cy - $extrafuzz - int(($radius) * 2 / 3)) .. ($cy + $extrafuzz + int(($radius) * 2 / 3))) {
-      my $dist = (int sqrt((($cx - $x) * ($cx - $x)) + (($cy - $y) * ($cy - $y)))) + $extrafuzz;
+  for my $x (0 .. $COLNO) {
+    for my $y (0 .. $ROWNO) {
+      my $dist = (int sqrt((($cx - $x) * ($cx - $x)) + (($cy - $y) * ($cy - $y)))) + int rand $extrafuzz;
       if (($x >= 0 + $margin) and ($x <= $COLNO - $margin) and
           ($y >= 0 + $margin) and ($y <= $ROWNO - $margin) and
-          ((int rand $dist) < ((int rand $radius) #+ (int rand $extrafuzz)
-                              ))) {
+          (int(($dist / 2) + rand ($dist / 2)) < ((int rand $radius) + (int rand $extrafuzz) - (int rand $extrafuzz)))) {
         if (($$map[$x][$y]{type} eq 'POOL') and $cmdarg{doshallow}) {
           $$map[$x][$y] = +{ type => 'ROOM',
                              char => '}',
