@@ -177,7 +177,7 @@ sub generate {
                    char => '}',
                    fg   => 'blue',
                    bg   => 'on_black',
-                 }, 1);
+                 }, 0);
     }
   } elsif (((defined $cmdarg{riverprob}) ? $cmdarg{riverprob} : 30) > int rand 100) {
     my $edgeone = $dir_available[rand @dir_available];
