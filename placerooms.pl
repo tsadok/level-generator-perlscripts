@@ -1519,6 +1519,7 @@ sub triangle_room {
 }
 
 sub hexagonroom {
+  # TODO: add closets off the vertices a percentage of the time.
   my ($roomno, $rxmax, $rymax) = @_;
   $rxmax ||= $xmax;
   $rymax ||= $ymax;
