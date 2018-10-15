@@ -9,7 +9,7 @@ my $domonsters = 0; # for now
 my $reset = chr(27) . qq{[0m};
 
 my ($ROWNO, $COLNO) = (($cmdarg{ROWNO} || 21), ($cmdarg{COLNO} || 79));
-my $depth = 3 + int rand 12;
+my $depth = 3 + $cmdarg{depth} || int rand 12;
 
 my $corr  = +{ t => 'CORR',
                b => 'on_black',
@@ -114,15 +114,15 @@ for (1 .. (int($availabletiles / 3) + int rand($availabletiles / 13))) {
   }}
 
 # Now we mine out a percentage of the minerals, depending on depth.
-my $startx = int($COLNO / 2);
-my $starty = int($ROWNO / 2);
+my $startx = int(($COLNO / 4) + rand($COLNO / 2));
+my $starty = int(($ROWNO / 4) + rand($ROWNO / 2));
 $map[$startx][$starty] = $floor;
-my @initialgoal = (+{ x => int($COLNO / 4),     y => int($ROWNO / 4)},
-                   +{ x => int(3 * $COLNO / 4), y => int(3 * $ROWNO / 4) },
-                   +{ x => int($COLNO / 4),     y => int(3 * $ROWNO / 4) },
-                   +{ x => int(3 * $COLNO / 4), y => int($ROWNO / 4)},
-                   +{ x => int($COLNO / 2),     y => int($ROWNO / 2)},
-                  );
+my @initialgoal = (+{ x => 1 + int(rand($COLNO / 2)),      y => 1 + int(rand($ROWNO / 2)), },
+                   +{ x => $COLNO - int(rand($COLNO / 2)), y => $ROWNO - int(rand($ROWNO / 2)), },
+                   +{ x => 1 + int(rand ($COLNO / 2)),     y => $ROWNO - int(rand($ROWNO / 2)), },
+                   +{ x => $COLNO - int(rand($COLNO / 2)), y => 1 + int(rand($ROWNO / 2)), },
+                   +{ x => 1 + int(rand $COLNO),           y => 1 + int(rand $ROWNO), },
+                     );
 my @miner = map { +{ x => $startx,
                      y => $starty,
                      goal  => shift @initialgoal,
@@ -173,9 +173,9 @@ while ($minedminerals < ((18 + $depth) * $totalminerals / 50)) {
     }
     my ($x, $y) = ($$m{x}, $$m{y});
     if (45 > rand 100) {
-      $x = $$m{x} + ($$m{goal}{x} <=> $$m{x});
+      $x += ($$m{goal}{x} <=> $$m{x});
     } else {
-      $y = $$m{y} + ($$m{goal}{y} <=> $$m{y});
+      $y += ($$m{goal}{y} <=> $$m{y});
     }
     if ($map[$x][$y]{t} eq 'STONE') { # mine out this tile
       if ($map[$x][$y]{m}) {
