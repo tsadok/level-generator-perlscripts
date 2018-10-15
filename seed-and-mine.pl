@@ -9,7 +9,7 @@ my $domonsters = 0; # for now
 my $reset = chr(27) . qq{[0m};
 
 my ($ROWNO, $COLNO) = (($cmdarg{ROWNO} || 21), ($cmdarg{COLNO} || 79));
-my $depth = 3 + $cmdarg{depth} || int rand 12;
+my $depth = $cmdarg{depth} || 3 + int rand 12;
 
 my $corr  = +{ t => 'CORR',
                b => 'on_black',
@@ -191,8 +191,8 @@ while ($minedminerals < ((18 + $depth) * $totalminerals / 50)) {
     }
   }
   if (not ($minedminerals % 4)) {
-    showmap();
-    select undef, undef, undef, 0.1;
+    showmap() unless $cmdarg{quick};
+    select undef, undef, undef, 0.1 unless $cmdarg{quick};
   }
 }
 # Replace corridors with floor where appropriate:
